@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "linear-automation",
+  "private_key_id": "54129d0ac6dc673f46f39ba848e49c2c56f3b0cc",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDfC0xaQlz4uQhe\nIAfM3X1+Qp2MiwwzTn5c9L/pbgI8kV5BEvElO90KpJYnjwrpNmKKnqIifZvB+BOD\nbmVC/Jc4V2Q95ncRnWJKTNfU2rFsSnt8N5TMzNSWWMJeWDCZDAVIKPNE+xkAy0IL\noZ2PN0IOr64ljgK+9lNcGpUwnGYyG51NY5WwLHfGiSpdGvKU88uh3POjUaVRKppg\nXuG8G6NQfVn2NMUV53+4NJYEWI0kJOyQfnFB0MkXn1DTitCXo9NwBH5CsJ4Xv0IW\nx6GSLpFeg/fC0nKJUHhxGvWb7irJcxZwzfLHwBYZnXH4VEDDsj0UpXlbBla51IEG\nZmMHEBpfAgMBAAECggEAOqESqesl2y9wNqW+xyg1k5nZJhdq1pW8e5zOUYLcTaV8\nnChpgPsSaHjJC477NEBaeMuoHN7dsYgPQQ4kyg3xhhrau7a398ZiDtvSJB50Yt3V\nRdqqX4c8HmUoeno+FAzn2ocBI1HJyb6kFsCd1QaWc5vUcAS7Tg0b7msCamvCJUtF\nMngFD5imbFwG7SyxcRCyuysAQjqxPVX4et5EmyyhSmJjKu3kABXluSTsdBMTEHAQ\nLJxezuJqGsj2Exdk5x5X0FrocSCBL5D3r9XvKoWks7HT6G0LOT/wP/xa1uZE0ZrW\nNjm4I6kvaAeyabwkOp52NTa3Pi41Xv7q3wXZTj8HUQKBgQD6pEWaImQa16ixUgCn\nYVUve94UOxhgYzcVGM4dqrgAAjjRyMHpIAFzOipvaP13bqyRwewH939/HmRjW8Pu\nQDUlcCGGLPOrcx6TP0g9KCBbzH+3xbvIuV4XpAwws8NPcPDiMocAg6XSOqR0CGtB\ny9WK4o2fsj1pRiZDkbJMGehqxwKBgQDjz/0ag4S33RyrBBCFdT2xiNYHrOTxxTNw\nGxtgaFV4E55XB43Fvp6Wh6jZ1o1AXY3dDFp0p5uXUaYHTy+qNMoDPkZQVxwYIoH+\nFJCKhj+d4qQnWKiznaRWug6fh3vsqPP6XHHblVq6f5E+tQo1oNgfJF0A86UTegHB\n6E5/wAx7qQKBgGyo4vPbjQKGFEAriNUHwWKAlNq4c+z1ll+zDUiXRoXacL+iBU8H\n7RkDUnpSTfCFLpNSOv2JMuDtUCAzHFIhy+ibIC2HN2xQ0CSN/sdkqgKiOYx2UN7I\nXh5ppE9I35eFIyktNpHmgPEPM1SKgdVYhQ9dAIEHSNBm9Re+BkovwS7pAoGAd69q\n+wYDsRFCoXpWL7djvST1xTyJX5fKKWikXmcSGC6+blyymCRIby9Af4nf1eQQxwRZ\ndZYlAT/NKWPp19M6GrAaAtVxFiDzCIjHU2+qdol+0okawJrenw3K5vcoHTK6U1tE\nGigCbZ7dsQMuJPSm9t2E2x4mKPBdggFJVIaSSFkCgYEAlhDVX9my7EsxQrO9WQ9w\nfVomoW6FiBOx1CZaHFIKq4MB6YBGcgczxmpoRbPXF3yjbfahhkCkP8RF63v0MQSN\nfqRXQhoC6Nbmc7ZWYjBzplXBFSLbzXrcOwcHRmzLfwqa/sYfFjWusmpHgnO9NqtU\nig8GYnUW5d7EMXHslSeNHqU=\n-----END PRIVATE KEY-----\n",
+  "client_email": "etienne-bugeja@linear-automation.iam.gserviceaccount.com",
+  "client_id": "110148447106866285857",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/etienne-bugeja%40linear-automation.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
