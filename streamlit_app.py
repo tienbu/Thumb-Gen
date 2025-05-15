@@ -1,24 +1,21 @@
 import streamlit as st, io, zipfile, tinify
 from PIL import Image
 
-# ─── YOUR shared TinyPNG key (set once in Streamlit Secrets) ───
 tinify.key = st.secrets["TINIFY_API_KEY"].strip()
 
-# ─── UI ───
 st.set_page_config(page_title="Thumbnail Processor", page_icon="🎮")
 st.title("🎮 One-Click Thumbnail Processor")
 
 game = st.text_input("1️⃣  Game name *", max_chars=50)
 
 files = st.file_uploader(
-    "2️⃣  Upload **portrait.jpg  –  landscape.png  –  box.jpg**",
+    "2️⃣  Upload  portrait.jpg • landscape.png • box.jpg",
     type=["jpg", "jpeg", "png"],
     accept_multiple_files=True
 )
 
 if st.button("✨ Process"):
 
-    # basic checks
     if not game:
         st.error("Please type the game name.")
         st.stop()
@@ -26,66 +23,86 @@ if st.button("✨ Process"):
         st.error("Upload all three images.")
         st.stop()
 
-    # map expected keywords → (original_ext , needs_compress?)
+    # expected → (original_ext, needs_compress?)
     spec = {
         "box":        (".jpg", False),
         "portrait":   (".jpg", True),
         "landscape":  (".png", True),
     }
     bucket = {}
-
-    # bucket the three required files
     for f in files:
-        for key in spec:
-            if key in f.name.lower():
-                bucket[key] = f
+        for k in spec:
+            if k in f.name.lower():
+                bucket[k] = f
                 break
-
     if len(bucket) != 3:
-        st.error("Filenames must contain **box**, **portrait**, and **landscape**.")
+        st.error("Filenames must contain box / portrait / landscape.")
         st.stop()
 
-    # helper: compress (if required) & optionally convert to webp
-    def make_files(src_bytes: bytes, do_compress: bool, make_webp: bool, out_ext: str):
-        if do_compress:
+    # helper to TinyPNG-compress + optional WebP conversion
+    def make_assets(raw, must_compress, want_webp, ext):
+        if must_compress:
             try:
-                src_bytes = tinify.from_buffer(src_bytes).to_buffer()
+                raw = tinify.from_buffer(raw).to_buffer()
             except tinify.errors.Error as e:
                 st.error(f"TinyPNG error: {e.message}")
                 st.stop()
-        outputs = [(out_ext, src_bytes)]
-        if make_webp:
-            im = Image.open(io.BytesIO(src_bytes))
-            webp_buf = io.BytesIO()
-            im.save(webp_buf, format="WEBP")
-            outputs.append((".webp", webp_buf.getvalue()))
-        return outputs
+        out = [(ext, raw)]
+        if want_webp:
+            img = Image.open(io.BytesIO(raw))
+            buf = io.BytesIO()
+            img.save(buf, format="WEBP")
+            out.append((".webp", buf.getvalue()))
+        return out
 
-    # create three in-memory zips
-    z_buf = {name: io.BytesIO() for name in ["Box", "Portrait", "Landscape"]}
-    zips  = {n: zipfile.ZipFile(b, "w", zipfile.ZIP_DEFLATED) for n, b in z_buf.items()}
+    # ─── build Portrait.zip and Landscape.zip first ───
+    zip_buf = {n: io.BytesIO() for n in ["Portrait", "Landscape"]}
+    z_portrait = zipfile.ZipFile(zip_buf["Portrait"], "w", zipfile.ZIP_DEFLATED)
+    z_landscape = zipfile.ZipFile(zip_buf["Landscape"], "w", zipfile.ZIP_DEFLATED)
 
-    # process each incoming file
-    for key, f in bucket.items():
-        orig_ext, do_comp = spec[key]
-        file_bytes = f.read()
-        outs = make_files(file_bytes, do_comp, key != "box", orig_ext)
+    # scratch dict to hold folder → {filename: bytes}
+    folders = {"Box": {}, "Portrait": {}, "Landscape": {}}
 
-        folder = key.capitalize()    # Box / Portrait / Landscape
-        zip_handle = zips[folder]
+    for key, file in bucket.items():
+        orig_ext, must_comp = spec[key]
+        raw_bytes = file.read()
 
-        for ext, data in outs:
-            filename = f"{game}{ext}"
-            zip_handle.writestr(filename, data)
+        assets = make_assets(
+            raw_bytes,
+            must_compress=must_comp,
+            want_webp=(key != "box"),
+            ext=orig_ext
+        )
 
-    # finalise and rewind buffers
-    for z in zips.values():
-        z.close()
-    for b in z_buf.values():
+        folder_name = key.capitalize()
+        for ext, data in assets:
+            fname = f"{game}{ext}"
+            folders[folder_name][fname] = data
+            if key == "portrait":
+                z_portrait.writestr(fname, data)
+            elif key == "landscape":
+                z_landscape.writestr(fname, data)
+
+    z_portrait.close(); z_landscape.close()
+    for b in zip_buf.values():
         b.seek(0)
 
-    # offer downloads
-    st.success("Done — download your folders:")
-    st.download_button("⬇️  Box.zip",        z_buf["Box"],        file_name="Box.zip")
-    st.download_button("⬇️  Portrait.zip",   z_buf["Portrait"],   file_name="Portrait.zip")
-    st.download_button("⬇️  Landscape.zip",  z_buf["Landscape"],  file_name="Landscape.zip")
+    # ─── build the master bundle ───
+    bundle = io.BytesIO()
+    with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as bigzip:
+        # add folders & files
+        for folder, files_dict in folders.items():
+            for name, data in files_dict.items():
+                bigzip.writestr(f"{folder}/{name}", data)
+        # add the two sub-zips
+        bigzip.writestr("Portrait.zip",  zip_buf["Portrait"].getvalue())
+        bigzip.writestr("Landscape.zip", zip_buf["Landscape"].getvalue())
+    bundle.seek(0)
+
+    st.success("All set — download your complete package:")
+    st.download_button(
+        "⬇️  Download Game bundle",
+        bundle,
+        file_name=f"{game}_bundle.zip",
+        mime="application/zip",
+    )
