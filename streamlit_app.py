@@ -10,10 +10,8 @@ from googleapiclient.discovery import build
 # ── secrets pulled from Streamlit Cloud ──────────────────────
 tinify.key = st.secrets["TINIFY_API_KEY"]
 
-st.text(repr(st.secrets["GOOGLE_SERVICE_JSON"][:60]))
+creds = Credentials.from_service_account_info(st.secrets["google_service"])
 
-creds = Credentials.from_service_account_info(
-    json.loads(st.secrets["GOOGLE_SERVICE_JSON"])
 )
 
 # Google Sheet with provider creds
