@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
-from js_eval import streamlit_js_eval          # local-storage helper
+from streamlit_js_eval import streamlit_js_eval        # local-storage helper
 from PIL import Image
 import tinify
 
