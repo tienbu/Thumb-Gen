@@ -12,8 +12,6 @@ tinify.key = st.secrets["TINIFY_API_KEY"]
 
 creds = Credentials.from_service_account_info(st.secrets["google_service"])
 
-)
-
 # Google Sheet with provider creds
 SPREADSHEET_ID = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
 RANGE_NAME     = "Sheet1!A:D"
