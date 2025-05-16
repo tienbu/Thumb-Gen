@@ -44,7 +44,7 @@ LINEAR_URL = "https://api.linear.app/graphql"
 def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
     """
     Uploads a file to Linear using a multipart-form GraphQL mutation.
-    Returns the URL of the uploaded file or raises an HTTPError with details.
+    Returns the URL of the uploaded file or shows an error message.
     """
     operations = {
         "query": """
@@ -65,9 +65,12 @@ def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
         "map":        json.dumps(file_map)
     }
     files = {"0": (filename, io.BytesIO(data))}
-    headers = {"Authorization": st.session_state["linear_key"]}
+    headers = {
+        "Authorization": st.session_state["linear_key"],
+        # Add this header to satisfy CSRF requirements
+        "x-apollo-operation-name": "fileUpload"
+    }
     resp = requests.post(LINEAR_URL, data=multipart_data, files=files, headers=headers)
-    # Handle errors with detailed message
     if resp.status_code != 200:
         try:
             error_info = resp.json()
@@ -97,7 +100,6 @@ section = st.sidebar.radio("Go to", ["Account Details", "Game List Retriever", "
 # ─── 5) Account Details ──────────────────────────────────────
 if section == "Account Details":
     st.header("🔧 Account Details")
-    # Temp inputs
     key_temp = st.text_input("Linear API Key", type="password", value=st.session_state.get("linear_key", ""))
     state_temp = st.text_input("Linear Column/State", value=st.session_state.get("linear_state", ""))
     if st.button("Save"):
@@ -106,7 +108,6 @@ if section == "Account Details":
         st.success("Account details saved.")
     st.stop()
 
-# Ensure credentials exist
 if not st.session_state.get("linear_key") or not st.session_state.get("linear_state"):
     st.error("Please set your API key and state in Account Details.")
     st.stop()
@@ -146,10 +147,10 @@ if section == "Game List Retriever":
         for n in nodes:
             title = n["title"]
             st.markdown(f"**{title}**")
-            key = title.split(" - ")[ -1].strip().lower()
+            key = title.split(" - ")[-1].strip().lower()
             match = next((providers[p] for p in providers if key in p), None)
             if match:
-                st.markdown(f"[Provider link]({match['url']})")
+                st.markdown(f"<a href='{match['url']}' target='_blank'>Provider link</a>", unsafe_allow_html=True)
                 st.write(f"User: {match['username']}  Pass: {match['password']}")
             else:
                 st.write("_No provider match_")
@@ -167,7 +168,6 @@ if section == "Thumbnail & Upload":
     chosen_title = st.selectbox("Choose a game to process", list(st.session_state["issue_map"].keys()))
     issue_id = st.session_state["issue_map"][chosen_title]
 
-    # Allow blank name; user must enter
     game = st.text_input("Game name", value="", placeholder=chosen_title)
     uploads = st.file_uploader(
         "Upload portrait.jpg, landscape.png, box.jpg",
@@ -185,7 +185,6 @@ if section == "Thumbnail & Upload":
             st.error("Please upload box, portrait, and landscape files.")
             st.stop()
 
-        # Prepare folders
         folders = {"Box":{}, "Portrait":{}, "Landscape":{}}
         for key, file in bucket.items():
             ext, compress = spec[key]
@@ -199,7 +198,6 @@ if section == "Thumbnail & Upload":
                 buf = io.BytesIO(); img.save(buf, format="WEBP")
                 folders[fold][f"{game}.webp"] = buf.getvalue()
 
-        # Create sub-zips
         subzips = {}
         for fold in ("Portrait","Landscape"):
             buf = io.BytesIO()
