@@ -37,7 +37,12 @@ tinify.key = st.secrets["TINIFY_API_KEY"]
 
 # ─── 3) Streamlit UI setup ──────────────────────────────────
 st.set_page_config(page_title="Game Tools", page_icon="🎮")
-st.title("🎮 Game Thumbnail & Launch Helper")
+st.markdown(
+    "<h1 style='white-space: nowrap; font-size:2.5rem; margin-bottom:1rem;'>"
+    "🎮 Game Thumbnail & Launch Helper"
+    "</h1>",
+    unsafe_allow_html=True,
+)
 
 # ─── 4) Linear credentials (per-session) ────────────────────
 linear_key   = st.text_input("🔑 Linear API key", type="password")
