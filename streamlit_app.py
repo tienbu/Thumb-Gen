@@ -42,6 +42,10 @@ tinify.key = st.secrets["TINIFY_API_KEY"]
 LINEAR_URL = "https://api.linear.app/graphql"
 
 def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
+    """
+    Uploads a file to Linear using a multipart-form GraphQL mutation.
+    Returns the URL of the uploaded file or raises an HTTPError with details.
+    """
     operations = {
         "query": """
         mutation($file: Upload!, $issueId: String!) {
@@ -63,7 +67,14 @@ def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
     files = {"0": (filename, io.BytesIO(data))}
     headers = {"Authorization": st.session_state["linear_key"]}
     resp = requests.post(LINEAR_URL, data=multipart_data, files=files, headers=headers)
-    resp.raise_for_status()
+    # Handle errors with detailed message
+    if resp.status_code != 200:
+        try:
+            error_info = resp.json()
+        except ValueError:
+            error_info = resp.text
+        st.error(f"❌ Failed to upload '{filename}': {error_info}")
+        resp.raise_for_status()
     return resp.json()["data"]["fileUpload"]["url"]
 
 def post_comment(issue_id: str, body: str):
