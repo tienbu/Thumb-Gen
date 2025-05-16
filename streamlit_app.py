@@ -8,7 +8,10 @@ import tinify
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-# ─── 1) Google Sheets service-account from Base64 secret ─────────
+# ─── Page config ─────────────────────────────────────────────
+st.set_page_config(page_title="Game Tools", page_icon="🎮", layout="wide")
+
+# ─── 1) Load Google service-account from Base64 secret ───────
 raw_sa  = base64.b64decode(st.secrets["GC_SERVICE_KEY_B64"])
 sa_info = json.loads(raw_sa)
 creds   = Credentials.from_service_account_info(sa_info)
@@ -18,13 +21,9 @@ SPREADSHEET_ID = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
 RANGE_NAME     = "Sheet1!A:D"
 
 def get_provider_credentials():
-    rows = (
-        sheets.spreadsheets()
-              .values()
-              .get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME)
-              .execute()
-              .get("values", [])
-    )
+    rows = sheets.spreadsheets().values() \
+                     .get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME) \
+                     .execute().get("values", [])
     providers = {}
     for r in rows[1:]:
         if len(r) >= 2:
@@ -36,105 +35,132 @@ def get_provider_credentials():
             }
     return providers
 
-# ─── 2) TinyPNG key from Secrets ─────────────────────────────
+# ─── 2) TinyPNG key ───────────────────────────────────────────
 tinify.key = st.secrets["TINIFY_API_KEY"]
 
-# ─── 3) UI setup ─────────────────────────────────────────────
-st.set_page_config(page_title="Game Tools", page_icon="🎮", layout="wide")
-st.sidebar.title("Navigation")
-section = st.sidebar.radio(
-    "Go to",
-    ["Account Details", "Game List Retriever", "Thumbnail Processor"]
-)
+# ─── 3) Linear upload/post helpers ───────────────────────────
+LINEAR_URL = "https://api.linear.app/graphql"
+def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
+    operations = {
+        "query": """
+        mutation($file: Upload!, $issueId: String!) {
+          fileUpload(input:{
+            entityType: ISSUE,
+            entityId: $issueId,
+            file: $file
+          }) {
+            url
+          }
+        }""",
+        "variables": {"file": None, "issueId": issue_id}
+    }
+    file_map = {"0": ["variables.file"]}
+    multipart_data = {
+        "operations": json.dumps(operations),
+        "map":        json.dumps(file_map)
+    }
+    files = {"0": (filename, io.BytesIO(data))}
+    headers = {"Authorization": st.session_state["linear_key"]}
+    resp = requests.post(LINEAR_URL, data=multipart_data, files=files, headers=headers)
+    resp.raise_for_status()
+    return resp.json()["data"]["fileUpload"]["url"]
 
-# ─── 4) Simple per-session Linear credentials ────────────────
+def post_comment(issue_id: str, body: str):
+    mutation = """
+    mutation($input: IssueCommentCreateInput!) {
+      issueCommentCreate(input: $input) {
+        success
+      }
+    }"""
+    variables = {"input": {"issueId": issue_id, "body": body}}
+    headers = {"Authorization": st.session_state["linear_key"], "Content-Type": "application/json"}
+    resp = requests.post(LINEAR_URL, json={"query": mutation, "variables": variables}, headers=headers)
+    resp.raise_for_status()
+    return resp.json()["data"]["issueCommentCreate"]["success"]
+
+# ─── 4) Sidebar navigation ───────────────────────────────────
+st.sidebar.title("Navigation")
+section = st.sidebar.radio("Go to", ["Account Details", "Game List Retriever", "Thumbnail & Upload"])
+
+# ─── 5) Account Details ──────────────────────────────────────
 if section == "Account Details":
     st.header("🔧 Account Details")
     st.session_state.setdefault("linear_key", "")
     st.session_state.setdefault("linear_state", "")
-    st.session_state["linear_key"]   = st.text_input(
-        "Linear API Key",
-        type="password",
-        value=st.session_state["linear_key"]
+    st.session_state["linear_key"] = st.text_input(
+        "Linear API Key", type="password", value=st.session_state["linear_key"]
     )
     st.session_state["linear_state"] = st.text_input(
-        "Linear Column/State",
-        value=st.session_state["linear_state"]
+        "Linear Column/State", value=st.session_state["linear_state"]
     )
     st.stop()
 
-linear_key   = st.session_state.get("linear_key", "")
-linear_state = st.session_state.get("linear_state", "")
+# ensure credentials exist
+if "linear_key" not in st.session_state or not st.session_state["linear_key"] \
+   or "linear_state" not in st.session_state or not st.session_state["linear_state"]:
+    st.error("Please set your API key and state in Account Details.")
+    st.stop()
 
-# ─── 5) Game List Retriever ─────────────────────────────────
+# ─── 6) Game List Retriever ──────────────────────────────────
 if section == "Game List Retriever":
     st.header("📋 Game List Retriever")
 
-    if not linear_key or not linear_state:
-        st.error("Please set your API key and state in Account Details.")
-        st.stop()
-
-    # —— New date selector ——
     date_choice = st.selectbox("Select date", ["Today", "Tomorrow"])
     fetch_date = datetime.today() if date_choice == "Today" else datetime.today() + timedelta(days=1)
     date_str = fetch_date.strftime("%Y-%m-%d")
 
-    if st.button("Fetch launches for " + date_choice):
-        # Build GraphQL query with the chosen date
+    if st.button(f"Fetch launches for {date_choice} ({date_str})"):
         gql = {
             "query": f"""
             query {{
               issues(filter:{{
                 dueDate:{{eq:"{date_str}"}},
                 labels:{{name:{{eq:"Game Launch"}}}},
-                state:{{name:{{eq:"{linear_state}"}}}}
-              }}){{nodes{{title}}}}
+                state:{{name:{{eq:"{st.session_state['linear_state']}"}}}}
+              }}){{nodes{{id title}}}}
             }}"""
         }
         resp = requests.post(
-            "https://api.linear.app/graphql",
-            headers={"Authorization": linear_key, "Content-Type": "application/json"},
-            json=gql,
-            timeout=20
+            LINEAR_URL, 
+            headers={"Authorization": st.session_state["linear_key"], "Content-Type": "application/json"},
+            json=gql
         )
         resp.raise_for_status()
-        tasks = resp.json().get("data",{}).get("issues",{}).get("nodes", [])
+        nodes = resp.json().get("data", {}).get("issues", {}).get("nodes", [])
+        issue_map = {n["title"]: n["id"] for n in nodes}
+        st.session_state["issue_map"] = issue_map
+        if nodes:
+            st.success(f"Fetched {len(nodes)} launch(es).")
+        else:
+            st.info("No launches found.")
 
-        providers = get_provider_credentials()
-        if not tasks:
-            st.info(f"No launches on {date_choice} ({date_str}).")
-        for t in tasks:
-            prov_key = t["title"].split(" - ")[-1].strip().lower()
-            match = next((providers[p] for p in providers if prov_key in p), None)
-            st.markdown(f"**{t['title']}**")
-            if match:
-                st.markdown(f"[Provider link]({match['url']})")
-                with st.expander("Credentials"):
-                    st.code(f"User: {match['username']}\nPass: {match['password']}")
-            else:
-                st.write("_No provider match_")
-            st.markdown("---")
+    if "issue_map" in st.session_state and st.session_state["issue_map"]:
+        st.write("### Available launches:")
+        for title in st.session_state["issue_map"]:
+            st.write("- " + title)
     st.stop()
 
-# ─── 6) Thumbnail Processor ─────────────────────────────────
-if section == "Thumbnail Processor":
-    st.header("🖼️ Thumbnail Processor")
+# ─── 7) Thumbnail & Upload ───────────────────────────────────
+if section == "Thumbnail & Upload":
+    st.header("🖼️ Thumbnail Processor & Linear Upload")
 
-    game   = st.text_input("Game name *", key="game_name")
+    if "issue_map" not in st.session_state or not st.session_state["issue_map"]:
+        st.error("No issues fetched. Go to Game List Retriever first.")
+        st.stop()
+
+    chosen_title = st.selectbox("Choose a game to process", list(st.session_state["issue_map"].keys()))
+    issue_id = st.session_state["issue_map"][chosen_title]
+
+    game = st.text_input("Game name", value=chosen_title)
     uploads = st.file_uploader(
         "Upload portrait.jpg, landscape.png, box.jpg",
         type=["jpg","jpeg","png"], accept_multiple_files=True
     )
 
-    if st.button("Process thumbnails"):
-        if not game:
-            st.error("Game name is required."); st.stop()
-        if len(uploads) < 3:
-            st.error("Upload portrait, landscape, and box."); st.stop()
-
+    if st.button("Process & Package"):
         spec = {
-            "box":       (".jpg", False),
-            "portrait":  (".jpg", True),
+            "box": (".jpg", False),
+            "portrait": (".jpg", True),
             "landscape": (".png", True),
         }
         bucket = {}
@@ -143,41 +169,51 @@ if section == "Thumbnail Processor":
                 if k in f.name.lower():
                     bucket[k] = f
         if len(bucket) != 3:
-            st.error("Files must include box, portrait & landscape."); st.stop()
+            st.error("Please upload box, portrait, and landscape files.")
+            st.stop()
 
-        # Process & zip
-        folders, zip_bufs = {"Box":{}, "Portrait":{}, "Landscape":{}}, {}
-        for key, file in bucket.items():
+        # build folders
+        folders, zip_buf = {"Portrait":{}, "Landscape":{}}, {}
+        # Box folder (no zip)
+        box_data = bucket["box"].read()
+        folders.setdefault("Box", {})[f"{game}.jpg"] = box_data
+
+        # portrait & landscape
+        for key in ("portrait", "landscape"):
             ext, compress = spec[key]
-            data = file.read()
+            data = bucket[key].read()
             if compress:
                 data = tinify.from_buffer(data).to_buffer()
-            folders[key.capitalize()][f"{game}{ext}"] = data
-            if key != "box":
-                img = Image.open(io.BytesIO(data))
-                buf = io.BytesIO(); img.save(buf, format="WEBP")
-                folders[key.capitalize()][f"{game}.webp"] = buf.getvalue()
+            folder = key.capitalize()
+            folders.setdefault(folder, {})[f"{game}{ext}"] = data
+            # webp
+            img = Image.open(io.BytesIO(data))
+            buf = io.BytesIO(); img.save(buf, format="WEBP")
+            folders[folder][f"{game}.webp"] = buf.getvalue()
 
-        for fold in ("Portrait","Landscape"):
+        # create sub-zip buffers
+        subzips = {}
+        for fold in ("Portrait", "Landscape"):
             buf = io.BytesIO()
-            z   = zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED)
+            z = zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED)
             for name, blob in folders[fold].items():
                 z.writestr(name, blob)
-            z.close(); buf.seek(0); zip_bufs[fold] = buf
+            z.close(); buf.seek(0)
+            subzips[fold] = buf.read()
 
-        bundle = io.BytesIO()
-        big    = zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED)
-        for fold, files in folders.items():
-            for name, blob in files.items():
-                big.writestr(f"{fold}/{name}", blob)
-        big.writestr("Portrait.zip",  zip_bufs["Portrait"].getvalue())
-        big.writestr("Landscape.zip", zip_bufs["Landscape"].getvalue())
-        big.close(); bundle.seek(0)
+        # store in session
+        st.session_state["portrait_zip"]  = subzips["Portrait"]
+        st.session_state["landscape_zip"] = subzips["Landscape"]
 
-        st.success("✅ Thumbnails ready—download below:")
-        st.download_button(
-            "⬇️ Download bundle ZIP",
-            bundle,
-            file_name=f"{game}_bundle.zip",
-            mime="application/zip"
-        )
+        st.success("✅ Bundles ready!")
+
+    if "portrait_zip" in st.session_state and "landscape_zip" in st.session_state:
+        if st.button("Upload All to Linear"):
+            with st.spinner("Uploading to Linear..."):
+                p_url = upload_file_to_linear(issue_id, f"{game}_portrait.zip", st.session_state["portrait_zip"])
+                l_url = upload_file_to_linear(issue_id, f"{game}_landscape.zip", st.session_state["landscape_zip"])
+                # post a comment with the portrait preview
+                comment_md = f"### Portrait Preview\n\n![]({p_url.replace('.zip','.jpg')})"
+                post_comment(issue_id, comment_md)
+            st.success("🎉 Uploaded ZIPs and posted comment!")
+
