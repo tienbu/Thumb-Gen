@@ -40,6 +40,7 @@ tinify.key = st.secrets["TINIFY_API_KEY"]
 
 # ─── 3) Linear upload/post helpers ───────────────────────────
 LINEAR_URL = "https://api.linear.app/graphql"
+
 def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
     operations = {
         "query": """
@@ -85,19 +86,17 @@ section = st.sidebar.radio("Go to", ["Account Details", "Game List Retriever", "
 # ─── 5) Account Details ──────────────────────────────────────
 if section == "Account Details":
     st.header("🔧 Account Details")
-    st.session_state.setdefault("linear_key", "")
-    st.session_state.setdefault("linear_state", "")
-    st.session_state["linear_key"] = st.text_input(
-        "Linear API Key", type="password", value=st.session_state["linear_key"]
-    )
-    st.session_state["linear_state"] = st.text_input(
-        "Linear Column/State", value=st.session_state["linear_state"]
-    )
+    # Temp inputs
+    key_temp = st.text_input("Linear API Key", type="password", value=st.session_state.get("linear_key", ""))
+    state_temp = st.text_input("Linear Column/State", value=st.session_state.get("linear_state", ""))
+    if st.button("Save"):
+        st.session_state["linear_key"] = key_temp.strip()
+        st.session_state["linear_state"] = state_temp.strip()
+        st.success("Account details saved.")
     st.stop()
 
-# ensure credentials exist
-if "linear_key" not in st.session_state or not st.session_state["linear_key"] \
-   or "linear_state" not in st.session_state or not st.session_state["linear_state"]:
+# Ensure credentials exist
+if not st.session_state.get("linear_key") or not st.session_state.get("linear_state"):
     st.error("Please set your API key and state in Account Details.")
     st.stop()
 
@@ -121,7 +120,7 @@ if section == "Game List Retriever":
             }}"""
         }
         resp = requests.post(
-            LINEAR_URL, 
+            LINEAR_URL,
             headers={"Authorization": st.session_state["linear_key"], "Content-Type": "application/json"},
             json=gql
         )
@@ -129,42 +128,45 @@ if section == "Game List Retriever":
         nodes = resp.json().get("data", {}).get("issues", {}).get("nodes", [])
         issue_map = {n["title"]: n["id"] for n in nodes}
         st.session_state["issue_map"] = issue_map
-        if nodes:
-            st.success(f"Fetched {len(nodes)} launch(es).")
-        else:
-            st.info("No launches found.")
 
-    if "issue_map" in st.session_state and st.session_state["issue_map"]:
-        st.write("### Available launches:")
-        for title in st.session_state["issue_map"]:
-            st.write("- " + title)
+        providers = get_provider_credentials()
+        if not nodes:
+            st.info(f"No launches on {date_choice} ({date_str}).")
+        for n in nodes:
+            title = n["title"]
+            st.markdown(f"**{title}**")
+            key = title.split(" - ")[ -1].strip().lower()
+            match = next((providers[p] for p in providers if key in p), None)
+            if match:
+                st.markdown(f"[Provider link]({match['url']})")
+                st.write(f"User: {match['username']}  Pass: {match['password']}")
+            else:
+                st.write("_No provider match_")
+            st.markdown("---")
     st.stop()
 
 # ─── 7) Thumbnail & Upload ───────────────────────────────────
 if section == "Thumbnail & Upload":
     st.header("🖼️ Thumbnail Processor & Linear Upload")
 
-    if "issue_map" not in st.session_state or not st.session_state["issue_map"]:
+    if not st.session_state.get("issue_map"):
         st.error("No issues fetched. Go to Game List Retriever first.")
         st.stop()
 
     chosen_title = st.selectbox("Choose a game to process", list(st.session_state["issue_map"].keys()))
     issue_id = st.session_state["issue_map"][chosen_title]
 
-    game = st.text_input("Game name", value=chosen_title)
+    # Allow blank name; user must enter
+    game = st.text_input("Game name", value="", placeholder=chosen_title)
     uploads = st.file_uploader(
         "Upload portrait.jpg, landscape.png, box.jpg",
         type=["jpg","jpeg","png"], accept_multiple_files=True
     )
 
     if st.button("Process & Package"):
-        spec = {
-            "box": (".jpg", False),
-            "portrait": (".jpg", True),
-            "landscape": (".png", True),
-        }
+        spec = {"box": (".jpg", False), "portrait": (".jpg", True), "landscape": (".png", True)}
         bucket = {}
-        for f in uploads:
+        for f in uploads or []:
             for k in spec:
                 if k in f.name.lower():
                     bucket[k] = f
@@ -172,48 +174,37 @@ if section == "Thumbnail & Upload":
             st.error("Please upload box, portrait, and landscape files.")
             st.stop()
 
-        # build folders
-        folders, zip_buf = {"Portrait":{}, "Landscape":{}}, {}
-        # Box folder (no zip)
-        box_data = bucket["box"].read()
-        folders.setdefault("Box", {})[f"{game}.jpg"] = box_data
-
-        # portrait & landscape
-        for key in ("portrait", "landscape"):
+        # Prepare folders
+        folders = {"Box":{}, "Portrait":{}, "Landscape":{}}
+        for key, file in bucket.items():
             ext, compress = spec[key]
-            data = bucket[key].read()
+            data = file.read()
             if compress:
                 data = tinify.from_buffer(data).to_buffer()
-            folder = key.capitalize()
-            folders.setdefault(folder, {})[f"{game}{ext}"] = data
-            # webp
-            img = Image.open(io.BytesIO(data))
-            buf = io.BytesIO(); img.save(buf, format="WEBP")
-            folders[folder][f"{game}.webp"] = buf.getvalue()
+            fold = key.capitalize()
+            folders[fold][f"{game}{ext}"] = data
+            if key != "box":
+                img = Image.open(io.BytesIO(data))
+                buf = io.BytesIO(); img.save(buf, format="WEBP")
+                folders[fold][f"{game}.webp"] = buf.getvalue()
 
-        # create sub-zip buffers
+        # Create sub-zips
         subzips = {}
-        for fold in ("Portrait", "Landscape"):
+        for fold in ("Portrait","Landscape"):
             buf = io.BytesIO()
             z = zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED)
-            for name, blob in folders[fold].items():
-                z.writestr(name, blob)
+            for name, blob in folders[fold].items(): z.writestr(name, blob)
             z.close(); buf.seek(0)
             subzips[fold] = buf.read()
-
-        # store in session
         st.session_state["portrait_zip"]  = subzips["Portrait"]
         st.session_state["landscape_zip"] = subzips["Landscape"]
-
         st.success("✅ Bundles ready!")
 
-    if "portrait_zip" in st.session_state and "landscape_zip" in st.session_state:
+    if st.session_state.get("portrait_zip") and st.session_state.get("landscape_zip"):
         if st.button("Upload All to Linear"):
             with st.spinner("Uploading to Linear..."):
                 p_url = upload_file_to_linear(issue_id, f"{game}_portrait.zip", st.session_state["portrait_zip"])
                 l_url = upload_file_to_linear(issue_id, f"{game}_landscape.zip", st.session_state["landscape_zip"])
-                # post a comment with the portrait preview
                 comment_md = f"### Portrait Preview\n\n![]({p_url.replace('.zip','.jpg')})"
                 post_comment(issue_id, comment_md)
             st.success("🎉 Uploaded ZIPs and posted comment!")
-
