@@ -1,10 +1,4 @@
-# ─────────────────────────────────────────────────────────
-#  Streamlit All-in-One Tool
-#  • Thumbnail compressor (TinyPNG → WebP → bundle.zip)
-#  • Daily “Game Launch” list (Linear + Google Sheets)
-#  • Simple Linear key/state inputs each session
-# ─────────────────────────────────────────────────────────
-import io, zipfile, requests, json
+import io, zipfile, requests, base64, json
 from datetime import datetime
 from pathlib import Path
 
@@ -14,51 +8,54 @@ import tinify
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-# ─── Google Sheets setup ─────────────────────────────────
-SERVICE_ACCOUNT_FILE = Path(__file__).parent / "linear-automation-62981b58cc22.json"
-creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE)
-sheets_srv = build("sheets", "v4", credentials=creds)
+# ─── 1) Google Sheets service-account from Base64 secret ─────────
+raw_sa = base64.b64decode(st.secrets["GC_SERVICE_KEY_B64"])
+sa_info = json.loads(raw_sa)
+creds = Credentials.from_service_account_info(sa_info)
+sheets = build("sheets", "v4", credentials=creds)
 
 SPREADSHEET_ID = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
 RANGE_NAME     = "Sheet1!A:D"
 
 def get_provider_credentials():
-    rows = sheets_srv.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME
-    ).execute().get("values", [])
-    out = {}
+    rows = sheets.spreadsheets().values() \
+        .get(spreadsheetId=SPREADSHEET_ID, range=RANGE_NAME) \
+        .execute().get("values", [])
+    providers = {}
     for r in rows[1:]:
         if len(r) >= 2:
-            name = r[0].strip().lower()
-            out[name] = {
+            key = r[0].strip().lower()
+            providers[key] = {
                 "url":      r[1].strip(),
                 "username": r[2].strip() if len(r) > 2 else "",
-                "password": r[3].strip() if len(r) > 3 else "",
+                "password": r[3].strip() if len(r) > 3 else ""
             }
-    return out
+    return providers
 
-# ─── TinyPNG key from Streamlit Secrets ───────────────────
+# ─── 2) TinyPNG key from Secrets ─────────────────────────────
 tinify.key = st.secrets["TINIFY_API_KEY"]
 
-# ─── Streamlit UI setup ──────────────────────────────────
+# ─── 3) Streamlit UI setup ──────────────────────────────────
 st.set_page_config(page_title="Game Tools", page_icon="🎮")
 st.title("🎮 Game Thumbnail & Launch Helper")
 
-# ─── Linear credentials (session‐only) ───────────────────
+# ─── 4) Linear credentials (per-session) ────────────────────
 linear_key   = st.text_input("🔑 Linear API key", type="password")
-linear_state = st.text_input("📋 Your Linear column/state name")
+linear_state = st.text_input("📋 Linear column/state name")
 
 if not linear_key or not linear_state:
     st.info("Enter your Linear API key and state above to continue.")
     st.stop()
 
-# ─── Thumbnail processor ──────────────────────────────────
+# ─── 5) Thumbnail processor ─────────────────────────────────
 st.header("🖼️ Thumbnail Processor")
-game    = st.text_input("Game name *")
+
+game = st.text_input("Game name *", key="game_name")
 uploads = st.file_uploader(
     "Upload portrait.jpg, landscape.png, box.jpg",
-    type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True
+    type=["jpg","jpeg","png"],
+    accept_multiple_files=True,
+    key="uploader"
 )
 
 if st.button("Process thumbnails"):
@@ -67,63 +64,72 @@ if st.button("Process thumbnails"):
     if len(uploads) < 3:
         st.error("Please upload portrait + landscape + box."); st.stop()
 
-    spec = {"box": (".jpg", False),
-            "portrait": (".jpg", True),
-            "landscape": (".png", True)}
+    spec = {
+        "box":       (".jpg", False),
+        "portrait":  (".jpg", True),
+        "landscape": (".png", True),
+    }
     bucket = {}
     for f in uploads:
         for k in spec:
             if k in f.name.lower():
                 bucket[k] = f
     if len(bucket) != 3:
-        st.error("Files must include box, portrait & landscape."); st.stop()
+        st.error("File names must include box, portrait & landscape."); st.stop()
 
-    # build folder dicts
-    folders, zbuf = {"Box": {}, "Portrait": {}, "Landscape": {}}, {}
-    for key, file in bucket.items():
-        ext, compress = spec[key]
-        data = file.read()
-        if compress:
+    # collect files
+    folders, zips = {"Box":{}, "Portrait":{}, "Landscape":{}}, {}
+    for key, f in bucket.items():
+        ext, do_compress = spec[key]
+        data = f.read()
+        if do_compress:
             data = tinify.from_buffer(data).to_buffer()
         # original
         folders[key.capitalize()][f"{game}{ext}"] = data
-        # WebP
+        # webp for portrait & landscape
         if key != "box":
             img = Image.open(io.BytesIO(data))
-            buf = io.BytesIO(); img.save(buf, format="WEBP")
+            buf = io.BytesIO()
+            img.save(buf, format="WEBP")
             folders[key.capitalize()][f"{game}.webp"] = buf.getvalue()
 
-    # portrait & landscape zips
-    for fold in ("Portrait", "Landscape"):
-        buf = io.BytesIO(); z = zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED)
+    # create zips for Portrait & Landscape
+    zip_buf = {}
+    for fold in ("Portrait","Landscape"):
+        buf = io.BytesIO()
+        z = zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED)
         for name, blob in folders[fold].items():
             z.writestr(name, blob)
-        z.close(); buf.seek(0); zbuf[fold] = buf
+        z.close()
+        buf.seek(0)
+        zip_buf[fold] = buf
 
-    # master bundle
-    bundle = io.BytesIO(); big = zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED)
+    # bundle everything into one ZIP
+    bundle = io.BytesIO()
+    big = zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED)
     for fold, files in folders.items():
         for name, blob in files.items():
             big.writestr(f"{fold}/{name}", blob)
-    big.writestr("Portrait.zip",  zbuf["Portrait"].getvalue())
-    big.writestr("Landscape.zip", zbuf["Landscape"].getvalue())
-    big.close(); bundle.seek(0)
+    # include the sub-zips
+    big.writestr("Portrait.zip",  zip_buf["Portrait"].getvalue())
+    big.writestr("Landscape.zip", zip_buf["Landscape"].getvalue())
+    big.close()
+    bundle.seek(0)
 
-    st.success("✅ Thumbnails ready:")
+    st.success("✅ Thumbnails ready—download below:")
     st.download_button(
-        "⬇️ Download bundle",
+        "⬇️ Download bundle ZIP",
         bundle,
         file_name=f"{game}_bundle.zip",
         mime="application/zip"
     )
 
-# ─── Today’s launches from Linear ─────────────────────────
+# ─── 6) Today’s launches from Linear ─────────────────────────
 st.header("🎮 Today’s Game Launches")
 
 if st.button("Fetch my launches"):
-    # GraphQL query for issues due today with label + state
-    today = datetime.today().strftime('%Y-%m-%d')
-    query = {
+    today = datetime.today().strftime("%Y-%m-%d")
+    gql = {
         "query": f"""
         query {{
           issues(filter:{{
@@ -136,18 +142,17 @@ if st.button("Fetch my launches"):
     resp = requests.post(
         "https://api.linear.app/graphql",
         headers={"Authorization": linear_key, "Content-Type": "application/json"},
-        json=query
+        json=gql
     )
     resp.raise_for_status()
-    tasks = resp.json()["data"]["issues"]["nodes"]
+    tasks = resp.json().get("data",{}).get("issues",{}).get("nodes",[])
 
-    creds_map = get_provider_credentials()
-
+    provs = get_provider_credentials()
     if not tasks:
         st.info("No launches today.")
     for t in tasks:
         prov = t["title"].split(" - ")[-1].strip().lower()
-        match = next((creds_map[p] for p in creds_map if prov in p), None)
+        match = next((provs[k] for k in provs if prov in k), None)
         st.markdown(f"**{t['title']}**")
         if match:
             st.markdown(f"[Provider link]({match['url']})")
