@@ -67,8 +67,9 @@ def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
     files = {"0": (filename, io.BytesIO(data))}
     headers = {
         "Authorization": st.session_state["linear_key"],
-        # Add this header to satisfy CSRF requirements
-        "x-apollo-operation-name": "fileUpload"
+        # Satisfy CSRF: non-default headers
+        "x-apollo-operation-name": "fileUpload",
+        "apollo-require-preflight": "true"
     }
     resp = requests.post(LINEAR_URL, data=multipart_data, files=files, headers=headers)
     if resp.status_code != 200:
