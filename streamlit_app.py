@@ -1,20 +1,20 @@
+# ─── Imports ──────────────────────────────────────────────
 import json
-from google.oauth2.service_account import Credentials
-
-creds = Credentials.from_service_account_info(
-    json.loads(st.secrets["GOOGLE_SERVICE_JSON"])
-)
-
-import io, json, zipfile, requests
+import io, zipfile, requests
 from datetime import datetime
+
 import streamlit as st
 from streamlit_js_eval import streamlit_js_eval
 from PIL import Image
 import tinify
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 
-# ── secrets pulled from Streamlit Cloud ──────────────────────
+# ─── Google credentials loaded from Secrets ───────────────
+creds = Credentials.from_service_account_info(
+    json.loads(st.secrets["GOOGLE_SERVICE_JSON"])
+)
+
+# ─── TinyPNG shared key from Secrets ──────────────────────
 tinify.key = st.secrets["TINIFY_API_KEY"]
 
 creds = Credentials.from_service_account_info(st.secrets["google_service"])
