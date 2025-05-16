@@ -1,3 +1,10 @@
+import json
+from google.oauth2.service_account import Credentials
+
+creds = Credentials.from_service_account_info(
+    json.loads(st.secrets["GOOGLE_SERVICE_JSON"])
+)
+
 import io, json, zipfile, requests
 from datetime import datetime
 import streamlit as st
