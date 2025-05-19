@@ -74,14 +74,14 @@ def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
     with httpx.Client() as client:
         resp = client.post(LINEAR_URL, files=files, headers=headers)
 
-    if resp.status_code != 200:
-        try:
-            st.error(f"❌ Failed to upload '{filename}': {resp.json()}")
-        except Exception:
-            st.error(resp.text)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            try:
+                st.error(f"❌ Failed to upload '{filename}': {resp.json()}")
+            except Exception:
+                st.error(resp.text)
+            resp.raise_for_status()
 
-    return resp.json()["data"]["fileUpload"]["url"]
+        return resp.json()["data"]["fileUpload"]["url"]
 
 def post_comment(issue_id: str, body: str):
     mutation = """
