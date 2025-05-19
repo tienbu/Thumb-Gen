@@ -175,14 +175,31 @@ if view == "Thumbnails":
             fold = k.capitalize()
             folders[fold][f"{game_name}{ext}"] = data
             if k != "box":
-                buf = io.BytesIO()
-                Image.open(io.BytesIO(data)).save(buf, format="WEBP")
-                folders[fold][f"{game_name}.webp"] = buf.getvalue()
+                buf_img = io.BytesIO()
+                Image.open(io.BytesIO(data)).save(buf_img, format="WEBP")
+                folders[fold][f"{game_name}.webp"] = buf_img.getvalue()
 
         zips = {}
         for fold in ("Portrait", "Landscape"):
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            buf_zip = io.BytesIO()
+            with zipfile.ZipFile(buf_zip, "w", zipfile.ZIP_DEFLATED) as zf:
                 for fname, blob in folders[fold].items():
                     zf.writestr(fname, blob)
-            buf.seek
+            buf_zip.seek(0)
+            zips[fold] = buf_zip.read()
+
+        st.session_state["portrait_zip"]  = zips["Portrait"]
+        st.session_state["landscape_zip"] = zips["Landscape"]
+                st.success("✅ Bundles ready – click 'Upload All to Linear'.")
+
+    # ── Upload button appears once zips exist ───────────────
+    if st.session_state.get("portrait_zip") and st.session_state.get("landscape_zip"):
+        if st.button("Upload All to Linear"):
+            with st.spinner("Uploading to Linear…"):
+                p_url = upload_file_to_linear(issue_id, f"{game_name}_portrait.zip", st.session_state["portrait_zip"])
+                l_url = upload_file_to_linear(issue_id, f"{game_name}_landscape.zip", st.session_state["landscape_zip"])
+                preview = p_url.replace(".zip", ".jpg")
+                post_comment(issue_id, f"### Portrait Preview
+
+![]({preview})")
+            st.success("🎉 Uploaded zips & posted comment!")
