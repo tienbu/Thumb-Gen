@@ -84,3 +84,6 @@ def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
         resp.raise_for_status()
 
     return resp.json()["data"]["fileUpload"]["url"]
+
+st.sidebar.title("Navigation")
+section = st.sidebar.radio("Go to", ["Account Details", "Game List Retriever", "Thumbnail & Upload"])
