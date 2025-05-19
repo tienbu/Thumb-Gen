@@ -189,8 +189,7 @@ if view == "Thumbnails":
             zips[fold] = buf_zip.read()
 
         st.session_state["portrait_zip"]  = zips["Portrait"]
-        st.session_state["landscape_zip"] = zips["Landscape"]
-                st.success("✅ Bundles ready – click 'Upload All to Linear'.")
+        st.session_state["landscape_zip"] = zips["Landscape"]        st.success("✅ Bundles ready – click 'Upload All to Linear'.")
 
     # ── Upload button appears once zips exist ───────────────
     if st.session_state.get("portrait_zip") and st.session_state.get("landscape_zip"):
