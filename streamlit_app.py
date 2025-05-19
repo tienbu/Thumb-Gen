@@ -7,6 +7,7 @@ from PIL import Image
 import tinify
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+import httpx
 
 # ─── Page config ─────────────────────────────────────────────
 st.set_page_config(page_title="Game Tools", page_icon="🎮", layout="wide")
@@ -42,44 +43,48 @@ tinify.key = st.secrets["TINIFY_API_KEY"]
 LINEAR_URL = "https://api.linear.app/graphql"
 
 def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
-    """
-    Uploads a file to Linear using a multipart-form GraphQL mutation.
-    Returns the URL of the uploaded file or shows an error message.
-    """
-    operations = {
+    operations = json.dumps({
         "query": """
         mutation($file: Upload!, $issueId: String!) {
-          fileUpload(input:{
+          fileUpload(input: {
             entityType: ISSUE,
             entityId: $issueId,
             file: $file
           }) {
             url
           }
-        }""",
+        }
+        """,
         "variables": {"file": None, "issueId": issue_id}
+    })
+
+    file_map = json.dumps({ "0": ["variables.file"] })
+
+    multipart = {
+        'operations': (None, operations, "application/json"),
+        'map': (None, file_map, "application/json"),
+        '0': (filename, data, "application/zip")
     }
-    file_map = {"0": ["variables.file"]}
-    multipart_data = {
-        "operations": json.dumps(operations),
-        "map":        json.dumps(file_map)
-    }
-    files = {"0": (filename, io.BytesIO(data))}
+
     headers = {
         "Authorization": st.session_state["linear_key"],
-        # Satisfy CSRF: non-default headers
-        "x-apollo-operation-name": "fileUpload",
-        "apollo-require-preflight": "true"
+        "x-apollo-operation-name": "fileUpload"
     }
-    resp = requests.post(LINEAR_URL, data=multipart_data, files=files, headers=headers)
-    if resp.status_code != 200:
-        try:
-            error_info = resp.json()
-        except ValueError:
-            error_info = resp.text
-        st.error(f"❌ Failed to upload '{filename}': {error_info}")
-        resp.raise_for_status()
-    return resp.json()["data"]["fileUpload"]["url"]
+
+    with httpx.Client() as client:
+        resp = client.post(
+            LINEAR_URL,
+            files=multipart,
+            headers=headers
+        )
+        if resp.status_code != 200:
+            try:
+                st.error(f"❌ Failed to upload '{filename}': {resp.json()}")
+            except Exception:
+                st.error(resp.text)
+            resp.raise_for_status()
+
+        return resp.json()["data"]["fileUpload"]["url"]
 
 def post_comment(issue_id: str, body: str):
     mutation = """
