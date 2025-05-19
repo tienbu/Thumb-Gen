@@ -60,28 +60,26 @@ def upload_file_to_linear(issue_id: str, filename: str, data: bytes) -> str:
 
     file_map = json.dumps({"0": ["variables.file"]})
 
-    headers = {
-        "Authorization": st.session_state["linear_key"],
-        "x-apollo-operation-name": "fileUpload"
+    files = {
+        'operations': (None, operations, "application/json"),
+        'map': (None, file_map, "application/json"),
+        '0': (filename, data, "application/zip")
     }
 
-    files = [
-        ("operations", ("operations.json", operations, "application/json")),
-        ("map", ("map.json", file_map, "application/json")),
-        ("0", (filename, data, "application/zip"))
-    ]
+    headers = {
+        "Authorization": st.session_state["linear_key"],
+    }
 
-    with httpx.Client() as client:
-        resp = client.post(LINEAR_URL, files=files, headers=headers)
+    resp = requests.post(LINEAR_URL, files=files, headers=headers)
 
-        if resp.status_code != 200:
-            try:
-                st.error(f"❌ Failed to upload '{filename}': {resp.json()}")
-            except Exception:
-                st.error(resp.text)
-            resp.raise_for_status()
+    if resp.status_code != 200:
+        try:
+            st.error(f"❌ Failed to upload '{filename}': {resp.json()}")
+        except Exception:
+            st.error(resp.text)
+        resp.raise_for_status()
 
-        return resp.json()["data"]["fileUpload"]["url"]
+    return resp.json()["data"]["fileUpload"]["url"]
 
 def post_comment(issue_id: str, body: str):
     mutation = """
