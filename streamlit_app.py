@@ -61,7 +61,7 @@ if view == "Account":
         )
         st.info("Your Linear API key is secret—never share it with others.")
     key   = st.text_input("Linear API Key", type="password", value=st.session_state.get("linear_key", ""))
-    state = st.text_input("Linear Column / State", value=st.session_state.get("linear_state", ""))
+    state = st.text_input("Designer Name", value=st.session_state.get("linear_state", ""))
     if st.button("Save"):
         st.session_state["linear_key"] = key.strip()
         st.session_state["linear_state"] = state.strip()
