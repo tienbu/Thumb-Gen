@@ -76,14 +76,11 @@ view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
 if view == "Account":
     st.markdown("# 👋 Welcome to Game Tools")
     st.markdown("This app helps you fetch game launches and generate/upload thumbnails with one click.")
-    with st.container():
-        col1 = st.columns([1, 3])
-        with col1:
-            st.markdown("### Connect your Linear account")
-            st.markdown("To use this tool, paste your Linear API key below.")
 
-        with st.expander("How to get your Linear API Key (step-by-step)"):
-            st.markdown("""
+    st.markdown("### Connect your Linear account")
+    st.markdown("To use this tool, paste your Linear API key below.")
+    with st.expander("How to get your Linear API Key (step-by-step)"):
+        st.markdown("""
 1️⃣ **Open Linear** and log in  
 2️⃣ Click your profile icon (**top left**) → **Settings**  
 3️⃣ Go to **Security & Access** > **Personal API Keys**  
@@ -91,7 +88,7 @@ if view == "Account":
 5️⃣ :warning: _Save your key somewhere safe—Linear only shows it once!_  
 6️⃣ Paste your API key below.
 """)
-        st.info("Need help? Contact the admin.")
+    st.info("Need help? Contact the admin.")
 
     key   = st.text_input("🔑 Linear API Key", type="password", value=st.session_state.get("linear_key", ""))
     state = st.text_input("🗂️ Linear Column / State", value=st.session_state.get("linear_state", ""))
@@ -100,6 +97,7 @@ if view == "Account":
         st.session_state["linear_state"] = state.strip()
         st.success("✅ Saved!")
     st.stop()
+
 
 # Guard for creds
 if "linear_key" not in st.session_state or "linear_state" not in st.session_state:
