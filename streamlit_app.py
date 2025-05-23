@@ -82,61 +82,48 @@ if "linear_key" not in st.session_state or "linear_state" not in st.session_stat
 
 # ───────────────────────────────
 # Fetch Games view
-# ───────────────────────────────
-if view == "Fetch Games":
+# ───────────────────────────────if view == "Fetch Games":
     st.header("📋 Fetch Game Launches")
-    st.markdown("Pick a date to list game launches")
-    date_val = st.date_input("Date", datetime.today())
-    date_str = date_val.strftime("%Y-%m-%d")
+    import datetime
+    choice = st.date_input("Pick a date to list game launches", datetime.date.today())
+    date_str = choice.strftime("%Y-%m-%d")
 
     if st.button("Fetch"):
         query = {
-            "query": f"""
-query {{
-    issues(
-        filter: {{
-            dueDate: {{eq: \"{date_str}\"}},
-            labels: {{name: {{eq: \"Game Launch\"}}}},
-            state: {{name: {{eq: \"{st.session_state['linear_state']}\"}}}}
-        }}
-    ) {{
-        nodes {{
-            id
-            title
-            identifier
-        }}
-    }}
-}}"""
+            "query": f"""query{{issues(filter:{{dueDate:{{eq:\"{date_str}\"}},labels:{{name:{{eq:\"Game Launch\"}}}},state:{{name:{{eq:\"{st.session_state['linear_state']}\"}}}}}}){{nodes{{id title}}}}}}"""
         }
-        r = requests.post(LINEAR_URL, headers={
-            "Authorization": st.session_state["linear_key"],
-            "Content-Type": "application/json"
-        }, json=query)
+        r = requests.post(
+            LINEAR_URL,
+            headers={
+                "Authorization": st.session_state["linear_key"],
+                "Content-Type": "application/json",
+            },
+            json=query,
+        )
         r.raise_for_status()
         nodes = r.json()["data"]["issues"]["nodes"]
-        st.session_state["issue_map"] = {n["title"]: {"id": n["id"], "identifier": n["identifier"]} for n in nodes}
+        st.session_state["issue_map"] = {n["title"]: n["id"] for n in nodes}
         provs = get_provider_credentials()
         if not nodes:
             st.info("No launches.")
+
         for n in nodes:
             st.subheader(n["title"])
-            # Get provider names: either "Hacksaw" or ["Hacksaw", "Bullshark Games"]
-            prov_names = n["title"].split(" - ")[-1].split("/")
-            provs_to_try = [prov_names[-1].strip().lower()] if len(prov_names) > 1 else [prov_names[0].strip().lower()]
-            match = None
-            for key in provs_to_try:
-                if key in provs:
-                    match = provs[key]
-                    break
+            # Get provider keys (split on /, always lowercase)
+            prov_names = [x.strip().lower() for x in n["title"].split(" - ")[-1].split("/")]
+            # Only use the last provider (per your requirements)
+            key = prov_names[-1]
+            match = provs.get(key)
             if match:
-                if match['url']:
+                if match["url"]:
                     st.markdown(f"[Provider link]({match['url']})")
-                if match['username'] or match['password']:
+                if match["username"] or match["password"]:
                     st.code(f"User: {match['username']}\nPass: {match['password']}")
             else:
-                st.warning("No provider info found for: " + ", ".join(provs_to_try))
+                st.warning(f"No provider info found for: {key.title()}")
             st.divider()
     st.stop()
+
 
 # ───────────────────────────────
 # Thumbnails view
