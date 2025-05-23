@@ -120,29 +120,22 @@ query {{
             st.info("No launches.")
         for n in nodes:
             st.subheader(n["title"])
+            # Get provider names: either "Hacksaw" or ["Hacksaw", "Bullshark Games"]
             prov_names = n["title"].split(" - ")[-1].split("/")
-            matches = []
-            for pname in prov_names:
-                key = pname.strip().lower()
+            provs_to_try = [prov_names[-1].strip().lower()] if len(prov_names) > 1 else [prov_names[0].strip().lower()]
+            match = None
+            for key in provs_to_try:
                 if key in provs:
-                    matches.append(provs[key])
-        
-            shown = False
-            for match in matches:
+                    match = provs[key]
+                    break
+            if match:
                 if match['url']:
                     st.markdown(f"[Provider link]({match['url']})")
-                # Only show username/pass if one of them is not empty
-                if match.get('username') or match.get('password'):
-                    st.code(f"User: {match.get('username', '')}\nPass: {match.get('password', '')}")
-                    shown = True
-                elif match['url']:
-                    shown = True
-        
-            if not shown:
-                st.warning("No provider info found for: " + ", ".join(prov_names))
+                if match['username'] or match['password']:
+                    st.code(f"User: {match['username']}\nPass: {match['password']}")
+            else:
+                st.warning("No provider info found for: " + ", ".join(provs_to_try))
             st.divider()
-
-
     st.stop()
 
 # ───────────────────────────────
