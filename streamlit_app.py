@@ -76,22 +76,24 @@ view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
 # ───────────────────────────────
 if view == "Account":
     st.header("🔧 Account Details")
-    st.markdown("""
-    **How to get your Linear API key:**  
-    1. Go to [Linear Settings > API](https://linear.app/settings/api).
-    2. Click "Create API Key".
-    3. Copy the key and paste below.
-    """)
+    with st.expander("How to get your Linear API key", expanded=True):
+        st.markdown(
+            """
+            1. Open [Linear](https://linear.app/) and log in.
+            2. Click your profile icon (top left) → **Settings**.
+            3. Under **Security & access**, find **Personal API keys**.
+            4. Click **New API key**, give it a name, and copy the key.
+            5. In order to get another key you need to create a new one so save this key somehere handy. 
+            5. Paste the API key below.
+            """
+        )
+        st.info("Your Linear API key is secret—never share it with others.")
     key   = st.text_input("Linear API Key", type="password", value=st.session_state.get("linear_key", ""))
     state = st.text_input("Linear Column / State", value=st.session_state.get("linear_state", ""))
     if st.button("Save"):
         st.session_state["linear_key"] = key.strip()
         st.session_state["linear_state"] = state.strip()
         st.success("Saved!")
-    st.stop()
-
-if "linear_key" not in st.session_state or "linear_state" not in st.session_state:
-    st.error("Set Linear credentials in Account tab first.")
     st.stop()
 
 # ───────────────────────────────
