@@ -26,32 +26,47 @@ SHEET_ID = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
 RANGE    = "Sheet1!A:D"
 
 def get_provider_credentials():
-    rows = sheets.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=RANGE).execute().get("values", [])
+    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=RANGE).execute().get("values", [])
+    if not rows or len(rows) < 2:
+        return {}
+
+    # Normalize headers: lower-case, strip spaces
     headers = [h.strip().lower() for h in rows[0]]
+    def col(name):  # helper to get column index by header name
+        try:
+            return headers.index(name.lower())
+        except ValueError:
+            return None
 
-    # Figure out indices we care about (case-insensitive)
-    idx_name    = headers.index("provider name")
-    idx_url     = headers.index("url")
-    idx_user    = headers.index("username")
-    idx_pass    = headers.index("password")
-    idx_aliases = None
-    if "aliases" in headers:
-        idx_aliases = headers.index("aliases")
+    idx_name    = col("provider name")
+    idx_url     = col("url")
+    idx_user    = col("username")
+    idx_pass    = col("password")
+    idx_aliases = col("aliases")
 
-    out = []
+    out = {}
     for r in rows[1:]:
-        rec = {
-            "providername": r[idx_name].strip().lower() if idx_name < len(r) else "",
-            "url": r[idx_url].strip() if idx_url < len(r) else "",
-            "username": r[idx_user].strip() if idx_user < len(r) else "",
-            "password": r[idx_pass].strip() if idx_pass < len(r) else "",
-            "aliases": []
+        if idx_name is None or idx_url is None:
+            continue  # can't process without at least these
+
+        key = r[idx_name].strip().lower() if len(r) > idx_name else ""
+        aliases = []
+        if idx_aliases is not None and len(r) > idx_aliases and r[idx_aliases].strip():
+            # Split by comma, strip whitespace
+            aliases = [a.strip().lower() for a in r[idx_aliases].split(",") if a.strip()]
+        entry = {
+            "url":      r[idx_url].strip()     if len(r) > idx_url else "",
+            "username": r[idx_user].strip()    if idx_user is not None and len(r) > idx_user else "",
+            "password": r[idx_pass].strip()    if idx_pass is not None and len(r) > idx_pass else "",
+            "aliases":  aliases
         }
-        if idx_aliases is not None and idx_aliases < len(r):
-            rec["aliases"] = [a.strip().lower() for a in r[idx_aliases].split(",") if a.strip()]
-        out.append(rec)
+        if key:
+            out[key] = entry
+            # add alias keys as well (point to main)
+            for alias in aliases:
+                out[alias] = entry
     return out
+
 
 def find_provider(providers, title):
     parts = [p.strip().lower() for p in title.split("/")]
