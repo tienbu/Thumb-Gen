@@ -83,7 +83,7 @@ if view == "Account":
             2. Click your profile icon (top left) → **Settings**.
             3. Under **Security & access**, find **Personal API keys**.
             4. Click **New API key**, give it a name, and copy the key.
-            5. In order to get another key you need to create a new one so save this key somehere handy. 
+            5. ""Important"" This key will only be shown once. Save it somewhere safe!
             5. Paste the API key below.
             """
         )
