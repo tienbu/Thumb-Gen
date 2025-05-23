@@ -136,8 +136,20 @@ if view == "Fetch Games":
             st.info("No launches.")
         for n in nodes:
             st.subheader(n["title"])
-            prov_key = n["title"].split(" - ")[-1].strip().lower()
-            match = next((provs[p] for p in provs if prov_key in p), None)
+            prov_names = n["title"].split(" - ")[-1].split("/")
+            matches = []
+        for pname in prov_names:
+            key = pname.strip().lower()
+        if key in provs:
+            matches.append(provs[key])
+        if matches:
+            # Show *all* provider info (can adjust if you want only one)
+        for match in matches:
+            st.markdown(f"[Provider link]({match['url']})")
+            st.code(f"User: {match['username']}\nPass: {match['password']}")
+else:
+    st.warning("No provider info found for: " + ", ".join(prov_names))
+
             if match:
                 st.markdown(f"[Provider link]({match['url']})")
                 st.code(f"User: {match['username']}\nPass: {match['password']}")
