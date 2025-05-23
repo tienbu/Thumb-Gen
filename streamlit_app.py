@@ -121,20 +121,27 @@ query {{
         for n in nodes:
             st.subheader(n["title"])
             prov_names = n["title"].split(" - ")[-1].split("/")
-            shown = set()
+            matches = []
             for pname in prov_names:
                 key = pname.strip().lower()
                 if key in provs:
-                    match = provs[key]
-                    # Only show unique credentials/links
-                    show_id = (match['url'], match['username'], match['password'])
-                    if show_id not in shown:
-                        st.markdown(f"[Provider link]({match['url']})")
-                        st.code(f"User: {match['username']}\nPass: {match['password']}")
-                        shown.add(show_id)
+                    matches.append(provs[key])
+        
+            shown = False
+            for match in matches:
+                if match['url']:
+                    st.markdown(f"[Provider link]({match['url']})")
+                # Only show username/pass if one of them is not empty
+                if match.get('username') or match.get('password'):
+                    st.code(f"User: {match.get('username', '')}\nPass: {match.get('password', '')}")
+                    shown = True
+                elif match['url']:
+                    shown = True
+        
             if not shown:
                 st.warning("No provider info found for: " + ", ".join(prov_names))
             st.divider()
+
 
     st.stop()
 
