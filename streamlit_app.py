@@ -26,17 +26,48 @@ SHEET_ID = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
 RANGE    = "Sheet1!A:D"
 
 def get_provider_credentials():
-    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=RANGE).execute().get("values", [])
-    out  = {}
+    rows = sheets.spreadsheets().values().get(
+        spreadsheetId=SHEET_ID, range=RANGE).execute().get("values", [])
+    headers = [h.strip().lower() for h in rows[0]]
+
+    # Figure out indices we care about (case-insensitive)
+    idx_name    = headers.index("provider name")
+    idx_url     = headers.index("url")
+    idx_user    = headers.index("username")
+    idx_pass    = headers.index("password")
+    idx_aliases = None
+    if "aliases" in headers:
+        idx_aliases = headers.index("aliases")
+
+    out = []
     for r in rows[1:]:
-        if len(r) >= 2:
-            key = r[0].strip().lower()
-            out[key] = {
-                "url":      r[1].strip(),
-                "username": r[2].strip() if len(r) > 2 else "",
-                "password": r[3].strip() if len(r) > 3 else "",
-            }
+        rec = {
+            "providername": r[idx_name].strip().lower() if idx_name < len(r) else "",
+            "url": r[idx_url].strip() if idx_url < len(r) else "",
+            "username": r[idx_user].strip() if idx_user < len(r) else "",
+            "password": r[idx_pass].strip() if idx_pass < len(r) else "",
+            "aliases": []
+        }
+        if idx_aliases is not None and idx_aliases < len(r):
+            rec["aliases"] = [a.strip().lower() for a in r[idx_aliases].split(",") if a.strip()]
+        out.append(rec)
     return out
+
+def find_provider(providers, title):
+    parts = [p.strip().lower() for p in title.split("/")]
+
+    for rec in providers:
+        # Direct provider name match
+        if rec["providername"] in parts:
+            return rec
+        # Alias match
+        if any(p in rec["aliases"] for p in parts):
+            return rec
+        # Substring fallback (rare)
+        if any(any(p in a for a in [rec["providername"]] + rec["aliases"]) for p in parts):
+            return rec
+    return None
+
 
 # ───────────────────────────────
 # Sidebar nav
