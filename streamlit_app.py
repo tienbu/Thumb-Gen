@@ -1,6 +1,5 @@
 import io, json, base64, zipfile, requests
 from datetime import datetime, timedelta
-
 import streamlit as st
 from PIL import Image
 import tinify
@@ -24,46 +23,46 @@ SA_INFO = json.loads(base64.b64decode(SERVICE_B64))
 creds   = Credentials.from_service_account_info(SA_INFO)
 sheets  = build("sheets", "v4", credentials=creds)
 SHEET_ID = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
-RANGE    = "Sheet1!A:F"  # expand if you have more columns
+RANGE    = "Sheet1!A:Z"   # Extended in case of more columns
 
 def get_provider_credentials():
     rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=RANGE).execute().get("values", [])
     if not rows:
         return {}
+
     headers = [h.strip().lower() for h in rows[0]]
-    idx_name = headers.index("provider name")
-    idx_url = headers.index("url")
-    idx_user = headers.index("username")
-    idx_pass = headers.index("password")
-    idx_alias = headers.index("aliases")
+    # Defensive: Find index for each field
+    idx_name    = headers.index("provider name")
+    idx_url     = headers.index("url")
+    idx_user    = headers.index("username")
+    idx_pass    = headers.index("password")
+    idx_aliases = headers.index("aliases") if "aliases" in headers else None
+
     out = {}
     for r in rows[1:]:
-        # Fill missing cells with empty string
-        while len(r) < len(headers):
-            r.append("")
-        all_names = [r[idx_name].strip().lower()]
-        # Add aliases if present
-        aliases = r[idx_alias].split(",") if r[idx_alias] else []
-        all_names += [a.strip().lower() for a in aliases if a.strip()]
-        # Save provider info for every possible name/alias
-        for name in all_names:
-            out[name] = {
-                "url":      r[idx_url].strip(),
-                "username": r[idx_user].strip(),
-                "password": r[idx_pass].strip(),
-            }
+        key = r[idx_name].strip().lower() if len(r) > idx_name else ""
+        if not key:
+            continue
+        aliases = []
+        if idx_aliases and len(r) > idx_aliases and r[idx_aliases].strip():
+            aliases = [a.strip().lower() for a in r[idx_aliases].split(",")]
+        out[key] = {
+            "url":      r[idx_url].strip()     if len(r) > idx_url else "",
+            "username": r[idx_user].strip()    if len(r) > idx_user else "",
+            "password": r[idx_pass].strip()    if len(r) > idx_pass else "",
+            "aliases":  aliases,
+        }
     return out
 
 # ───────────────────────────────
-# Linear helpers (official two‑step upload)
+# Linear helpers (without upload, just zips)
 # ───────────────────────────────
 
-def upload_file_to_linear(issue_id: str, fname: str, data: bytes) -> str:
-    # This function is left as a stub since upload to Linear is currently disabled.
-    return ""
-
 def post_comment(issue_id: str, body: str):
-    pass  # No-op since uploads/comments are disabled
+    mutation = "mutation($input:IssueCommentCreateInput!){issueCommentCreate(input:$input){success}}"
+    vars = {"input": {"issueId": issue_id, "body": body}}
+    headers = {"Authorization": st.session_state["linear_key"], "Content-Type": "application/json"}
+    requests.post(LINEAR_URL, json={"query": mutation, "variables": vars}, headers=headers).raise_for_status()
 
 # ───────────────────────────────
 # Sidebar nav
@@ -75,69 +74,82 @@ view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
 # Account view
 # ───────────────────────────────
 if view == "Account":
-    st.header("🔧 Account Details")
-    with st.expander("How to get your Linear API key", expanded=True):
-        st.markdown(
-            """
-            1. Open [Linear](https://linear.app/) and log in.
-            2. Click your profile icon (top left) → **Settings**.
-            3. Under **Security & access**, find **Personal API keys**.
-            4. Click **New API key**, give it a name, and copy the key.
-            5. **Important** This key will only be shown once. Save it somewhere safe!
-            5. Paste the API key below.
-            """
-        )
-        st.info("Your Linear API key is secret—never share it with others.")
-    key   = st.text_input("Linear API Key", type="password", value=st.session_state.get("linear_key", ""))
-    state = st.text_input("Linear Column / State", value=st.session_state.get("linear_state", ""))
+    st.markdown("# 👋 Welcome to Game Tools")
+    st.markdown("This app helps you fetch game launches and generate/upload thumbnails with one click.")
+    with st.container():
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            st.image("https://linear.app/_next/static/media/linear-icon.svg", width=60)
+        with col2:
+            st.markdown("### Connect your Linear account")
+            st.markdown("To use this tool, paste your Linear API key below.")
+
+        with st.expander("How to get your Linear API Key (step-by-step)"):
+            st.markdown("""
+1️⃣ **Open Linear** and log in  
+2️⃣ Click your profile icon (**top left**) → **Settings**  
+3️⃣ Go to **Security & Access** > **Personal API Keys**  
+4️⃣ Click **New API Key**, give it a name, and **copy the key**  
+5️⃣ :warning: _Save your key somewhere safe—Linear only shows it once!_  
+6️⃣ Paste your API key below.
+""")
+        st.info("Need help? Contact the admin.")
+
+    key   = st.text_input("🔑 Linear API Key", type="password", value=st.session_state.get("linear_key", ""))
+    state = st.text_input("🗂️ Linear Column / State", value=st.session_state.get("linear_state", ""))
     if st.button("Save"):
         st.session_state["linear_key"] = key.strip()
         st.session_state["linear_state"] = state.strip()
-        st.success("Saved!")
+        st.success("✅ Saved!")
+    st.stop()
+
+# Guard for creds
+if "linear_key" not in st.session_state or "linear_state" not in st.session_state:
+    st.error("Set Linear credentials in Account tab first.")
     st.stop()
 
 # ───────────────────────────────
 # Fetch Games view
 # ───────────────────────────────
 if view == "Fetch Games":
-    st.header("📋 Fetch Game Launches")
-    import datetime
-    choice = st.date_input("Pick a date to list game launches", datetime.date.today())
-    date_str = choice.strftime("%Y-%m-%d")
+    st.markdown("## 📋 Fetch Game Launches")
+    # Use a calendar for date picking
+    date_input = st.date_input("Choose a date", datetime.today())
+    date_str = date_input.strftime("%Y-%m-%d")
 
     if st.button("Fetch"):
         query = {
             "query": f"""query{{issues(filter:{{dueDate:{{eq:\"{date_str}\"}},labels:{{name:{{eq:\"Game Launch\"}}}},state:{{name:{{eq:\"{st.session_state['linear_state']}\"}}}}}}){{nodes{{id title}}}}}}"""
         }
-        r = requests.post(
-            LINEAR_URL,
-            headers={
-                "Authorization": st.session_state["linear_key"],
-                "Content-Type": "application/json",
-            },
-            json=query,
-        )
+        r = requests.post(LINEAR_URL, headers={"Authorization": st.session_state["linear_key"], "Content-Type": "application/json"}, json=query)
         r.raise_for_status()
         nodes = r.json()["data"]["issues"]["nodes"]
         st.session_state["issue_map"] = {n["title"]: n["id"] for n in nodes}
         provs = get_provider_credentials()
         if not nodes:
             st.info("No launches.")
-
         for n in nodes:
+            # Add direct link to Linear task
+            issue_url = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
             st.subheader(n["title"])
-            # Get provider keys (split on /, always lowercase)
-            prov_names = [x.strip().lower() for x in n["title"].split(" - ")[-1].split("/")]
-            # Only use the last provider (per your requirements)
-            key = prov_names[-1]
-            match = provs.get(key)
-            if match:
-                if match["url"]:
+            st.markdown(f"[🔗 Open in Linear]({issue_url})")
+            # Provider matching with aliases
+            prov_names = n["title"].split(" - ")[-1].split("/")
+            matches = []
+            for pname in prov_names:
+                key = pname.strip().lower()
+                for prov, info in provs.items():
+                    all_names = [prov] + info["aliases"]
+                    if key in all_names:
+                        matches.append(info)
+                        break
+            if matches:
+                for match in matches:
                     st.markdown(f"[Provider link]({match['url']})")
-                if match["username"] or match["password"]:
-                    st.code(f"User: {match['username']}\nPass: {match['password']}")
+                    if match['username'] or match['password']:
+                        st.code(f"User: {match['username']}\nPass: {match['password']}")
             else:
-                st.warning(f"No provider info found for: {key.title()}")
+                st.warning("No provider info found for: " + ", ".join(prov_names))
             st.divider()
     st.stop()
 
@@ -145,24 +157,21 @@ if view == "Fetch Games":
 # Thumbnails view
 # ───────────────────────────────
 if view == "Thumbnails":
-    st.header("🖼️ Create Game Thumbnails Bundle")
+    st.markdown("## 🖼️ Create & Download Thumbnail Bundles")
     if "issue_map" not in st.session_state:
         st.error("Fetch games first.")
         st.stop()
 
     issue_title = st.selectbox("Issue", list(st.session_state["issue_map"].keys()))
     issue_id    = st.session_state["issue_map"][issue_title]
-    # Direct link to Linear
-    linear_link = f"https://linear.app/issue/{issue_id}"
-
     game_name = st.text_input("Game name", placeholder=issue_title)
-    uploads   = st.file_uploader("portrait, landscape, box", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+    uploads   = st.file_uploader("Upload portrait, landscape, box", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
     if st.button("Process"):
         spec = {"box": (".jpg", False), "portrait": (".jpg", True), "landscape": (".png", True)}
         bucket = {k: f for f in uploads or [] for k in spec if k in f.name.lower()}
         if len(bucket) != 3:
-            st.error("Upload portrait, landscape, box.")
+            st.error("Upload portrait, landscape, and box.")
             st.stop()
 
         folders = {"Box": {}, "Portrait": {}, "Landscape": {}}
@@ -178,7 +187,7 @@ if view == "Thumbnails":
                 Image.open(io.BytesIO(data)).save(buf, format="WEBP")
                 folders[fold][f"{game_name}.webp"] = buf.getvalue()
 
-        # ZIP logic
+        # Build zips and one mega zip
         zips = {}
         for fold in ("Portrait", "Landscape"):
             buf_zip = io.BytesIO()
@@ -188,16 +197,15 @@ if view == "Thumbnails":
             buf_zip.seek(0)
             zips[fold] = buf_zip.read()
 
-        # Build master zip with all
-        bundle = io.BytesIO()
-        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Folders
+        mega_buf = io.BytesIO()
+        with zipfile.ZipFile(mega_buf, "w", zipfile.ZIP_DEFLATED) as mega:
             for fold in folders:
                 for fname, blob in folders[fold].items():
-                    zf.writestr(f"{fold}/{fname}", blob)
-            # Zips
-            zf.writestr("portrait.zip", zips["Portrait"])
-            zf.writestr("landscape.zip", zips["Landscape"])
-        bundle.seek(0)
-        st.success(f"✅ Bundles ready. [Go to task in Linear]({linear_link})")
-        st.download_button("⬇️ Download all (ZIP)", bundle, file_name=f"{game_name or issue_title}_bundle.zip")
+                    mega.writestr(f"{fold}/{fname}", blob)
+            for fold in ("Portrait", "Landscape"):
+                mega.writestr(f"{fold}.zip", zips[fold])
+        mega_buf.seek(0)
+
+        st.download_button("⬇️ Download Everything (zip)", mega_buf, file_name=f"{game_name}_bundle.zip", mime="application/zip")
+        st.success("✅ Bundle ready! Download your assets.")
+
