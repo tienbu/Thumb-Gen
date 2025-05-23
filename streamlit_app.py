@@ -180,5 +180,19 @@ if view == "Thumbnails":
             buf_zip.seek(0)
             zips[fold] = buf_zip.read()
 
+                # save zips
         st.session_state["portrait_zip"]  = zips["Portrait"]
-        st.session_state["landscape_zip"] = zips
+        st.session_state["landscape_zip"] = zips["Landscape"]
+        st.success("✅ Bundles ready – click 'Upload All to Linear'.")
+
+    # ── Upload button appears once zips are ready ────────────
+    if st.session_state.get("portrait_zip") and st.session_state.get("landscape_zip"):
+        if st.button("Upload All to Linear"):
+            with st.spinner("Uploading to Linear…"):
+                p_url = upload_file_to_linear(issue_id, f"{game_name}_portrait.zip", st.session_state["portrait_zip"])
+                l_url = upload_file_to_linear(issue_id, f"{game_name}_landscape.zip", st.session_state["landscape_zip"])
+                preview = p_url.replace(".zip", ".jpg")
+                post_comment(issue_id, f"### Portrait Preview
+
+![]({preview})")
+            st.success("🎉 Uploaded zips & posted comment!")
