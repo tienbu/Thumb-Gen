@@ -67,9 +67,8 @@ if "linear_key" not in st.session_state or "linear_state" not in st.session_stat
 # ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch Game Launches")
-    choice = st.selectbox("Date", ["Today", "Tomorrow"])
-    target = datetime.today() if choice == "Today" else datetime.today() + timedelta(days=1)
-    date_str = target.strftime("%Y-%m-%d")
+    date_input = st.date_input("Pick a date to list game launches", value=datetime.today())
+    date_str = date_input.strftime("%Y-%m-%d")
 
     LINEAR_URL = "https://api.linear.app/graphql"
     if st.button("Fetch"):
