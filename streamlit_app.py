@@ -68,6 +68,7 @@ def upload_file_to_linear(issue_id: str, fname: str, data: bytes) -> str:
         headers={"Authorization": st.session_state["linear_key"], "Content-Type": "application/json"},
         timeout=20,
     )
+    st.error(meta.text)
     meta.raise_for_status()
     info = meta.json()["data"]["fileUpload"]
 
