@@ -152,7 +152,7 @@ if view == "Thumbnails":
     uploads   = st.file_uploader("portrait, landscape, box", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
     if st.button("Process"):
-        spec   = {"box": (".jpg", False), "portrait": (".jpg", True), "landscape": (".png", True)}
+        spec = {"box": (".jpg", False), "portrait": (".jpg", True), "landscape": (".png", True)}
         bucket = {k: f for f in uploads or [] for k in spec if k in f.name.lower()}
         if len(bucket) != 3:
             st.error("Upload portrait, landscape, box.")
@@ -180,7 +180,7 @@ if view == "Thumbnails":
             buf_zip.seek(0)
             zips[fold] = buf_zip.read()
 
-                # save zips
+        # save zips
         st.session_state["portrait_zip"]  = zips["Portrait"]
         st.session_state["landscape_zip"] = zips["Landscape"]
         st.success("✅ Bundles ready – click 'Upload All to Linear'.")
