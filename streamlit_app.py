@@ -192,7 +192,8 @@ if view == "Thumbnails":
                 p_url = upload_file_to_linear(issue_id, f"{game_name}_portrait.zip", st.session_state["portrait_zip"])
                 l_url = upload_file_to_linear(issue_id, f"{game_name}_landscape.zip", st.session_state["landscape_zip"])
                 preview = p_url.replace(".zip", ".jpg")
-                post_comment(issue_id, f"### Portrait Preview
+                                comment_body = f"### Portrait Preview
 
-![]({preview})")
+![]({preview})"
+                post_comment(issue_id, comment_body)")
             st.success("🎉 Uploaded zips & posted comment!")
