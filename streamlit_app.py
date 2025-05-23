@@ -137,23 +137,21 @@ if view == "Fetch Games":
         for n in nodes:
             st.subheader(n["title"])
             prov_names = n["title"].split(" - ")[-1].split("/")
-            matches = []
+            shown = set()
             for pname in prov_names:
                 key = pname.strip().lower()
                 if key in provs:
-                    matches.append(provs[key])
-            if matches:
-                # Show *all* provider info (can adjust if you want only one)
-                for match in matches:
-                    st.markdown(f"[Provider link]({match['url']})")
-                    st.code(f"User: {match['username']}\nPass: {match['password']}")
-            else:
+                    match = provs[key]
+                    # Only show unique credentials/links
+                    show_id = (match['url'], match['username'], match['password'])
+                    if show_id not in shown:
+                        st.markdown(f"[Provider link]({match['url']})")
+                        st.code(f"User: {match['username']}\nPass: {match['password']}")
+                        shown.add(show_id)
+            if not shown:
                 st.warning("No provider info found for: " + ", ".join(prov_names))
-
-            if match:
-                st.markdown(f"[Provider link]({match['url']})")
-                st.code(f"User: {match['username']}\nPass: {match['password']}")
             st.divider()
+
     st.stop()
 
 # ───────────────────────────────
