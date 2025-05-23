@@ -162,6 +162,7 @@ if view == "Thumbnails":
     issue_id    = st.session_state["issue_map"][issue_title]
     game_name = st.text_input("Game name", placeholder=issue_title)
     uploads   = st.file_uploader("Upload portrait, landscape, box", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+    st.markdown(f"[🔗 Open in Linear](https://linear.app/your-workspace/issue/{issue_id})")
 
     if st.button("Process"):
         spec = {"box": (".jpg", False), "portrait": (".jpg", True), "landscape": (".png", True)}
