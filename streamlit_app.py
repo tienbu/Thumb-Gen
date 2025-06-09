@@ -1,4 +1,4 @@
-import io, json, base64, zipfile, requests
+import io, json, base64, zipfile, requests, re, difflib
 from datetime import datetime
 import streamlit as st
 from PIL import Image
@@ -27,97 +27,53 @@ PROV_RANGE    = "Sheet1!A:Z"
 USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
 
 # ───────────────────────────────
-# Duplicate
+# DUPLICATE-DETECTION HELPER (provider part ignored, case/spacing tolerant)
 # ───────────────────────────────
+def _clean(t: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", t.lower())
 
-def duplicate_exact(api_key: str, base_title: str, self_id: str) -> str | None:
+def duplicate_contains(api_key: str, full_title: str, self_id: str) -> str | None:
     """
-    Return the URL of another open Game-Launch ticket whose *full* title equals
-    base_title (case-sensitive), or None if no duplicate.
-    """
-    query = """
-query($ttl:String!,$self:String!){
-  issues(
-    filter:{
-      title:{eq:$ttl},
-      labels:{name:{eq:"Game Launch"}},
-      state:{type:{neq:COMPLETED}},
-      id:{neq:$self}
-    },
-    first:1
-  ){ nodes{ url } }
-}"""
-    try:
-        resp = requests.post(
-            LINEAR_URL,
-            json={"query": query, "variables": {"ttl": base_title, "self": self_id}},
-            headers={"Authorization": api_key, "Content-Type": "application/json"},
-            timeout=10,
-        ).json()
-        nodes = resp.get("data", {}).get("issues", {}).get("nodes", [])
-        return nodes[0]["url"] if nodes else None
-    except requests.exceptions.RequestException:
-        return None
-
-
-# ───────────────────────────────
-# Helpers  ─ providers & user-keys
-# ───────────────────────────────
-import re, difflib
-
-def clean(txt: str) -> str:
-    """lower-case; keep alphanumerics only"""
-    return re.sub(r"[^a-z0-9]", "", txt.lower())
-
-
-def fuzzy_duplicate(api_key: str, full_title: str, self_id: str) -> str | None:
-    """
-    Return the URL of an *open* Game-Launch ticket whose BASE title
-    is ≥80 % similar to this one (case/spacing/punctuation insensitive),
-    or None if none found.
+    Return URL of *another* open Game-Launch whose BASE title is ≥80 % similar.
+    None ⇒ no duplicate.
     """
     base = full_title.split(" - ")[0].strip()
-    term = " ".join(base.split()[:4])            # first few words are enough
-
     query = """
-query ($term:String!,$self:String!){
-  issueSearch(
-    term:$term,
-    first:15,
+query ($needle:String!, $self:String!){
+  issues(
     filter:{
-      labels:{name:{eq:"Game Launch"}},
-      state:{type:{neq:COMPLETED}},
-      id:{neq:$self}
-    }
+      title:{ contains:$needle },
+      labels:{ name:{ eq:"Game Launch" } },
+      state:{ type:{ neq:COMPLETED } },
+      id:{ neq:$self }
+    },
+    first:25
   ){ nodes{ id title url } }
 }"""
     try:
-        resp = requests.post(
+        r = requests.post(
             LINEAR_URL,
-            json={"query": query, "variables": {"term": term, "self": self_id}},
+            json={"query": query, "variables": {"needle": base, "self": self_id}},
             headers={"Authorization": api_key, "Content-Type": "application/json"},
-            timeout=10,
+            timeout=15,
         ).json()
-        nodes = resp.get("data", {}).get("issueSearch", {}).get("nodes", [])
-        cb = clean(base)
+        nodes = r.get("data", {}).get("issues", {}).get("nodes", [])
+        cb = _clean(base)
         for n in nodes:
-            other_base = n["title"].split(" - ")[0].strip()
-            sim = difflib.SequenceMatcher(None, cb, clean(other_base)).ratio()
-            if sim >= 0.80:                    # tweak threshold if needed
+            if difflib.SequenceMatcher(None, cb, _clean(n["title"].split(" - ")[0].strip())).ratio() >= 0.80:
                 return n["url"]
         return None
     except requests.exceptions.RequestException:
         return None
 
 # ───────────────────────────────
-
+# Helpers  — providers & user-keys
+# ───────────────────────────────
 def safe_nodes(resp: dict) -> list[dict]:
-    """Return resp['data']['issues']['nodes'] or [] and surface errors."""
     if "errors" in resp and resp["errors"]:
         st.error("Linear API error:\n" + json.dumps(resp["errors"], indent=2))
         return []
     return resp.get("data", {}).get("issues", {}).get("nodes", [])
-
 
 def load_user_keys():
     rows = sheets.spreadsheets().values().get(
@@ -129,7 +85,6 @@ def load_user_keys():
         }
         for r in rows[1:] if r and r[0].strip()
     }
-
 
 def save_user_key(name: str, key: str, col: str):
     rows = sheets.spreadsheets().values().get(
@@ -146,7 +101,6 @@ def save_user_key(name: str, key: str, col: str):
         sheets.spreadsheets().values().update(
             spreadsheetId=SHEET_ID, range=rng,
             valueInputOption="RAW", body=body).execute()
-
 
 def get_provider_credentials():
     rows = sheets.spreadsheets().values().get(
@@ -174,42 +128,6 @@ def get_provider_credentials():
             "aliases":  aliases,
         }
     return out
-
-# ───────────────────────────────
-# Linear helper — paginate all open Game-Launch issues
-# ───────────────────────────────
-def fetch_all_open_game_launches(api_key: str) -> list[dict]:
-    query = """
-query ($after:String){
-  issues(
-    filter:{
-      labels:{name:{eq:"Game Launch"}},
-      state:{type:{neq:COMPLETED}}
-    },
-    first:250,
-    after:$after
-  ){
-    nodes{ id title }
-    pageInfo{ hasNextPage endCursor }
-  }
-}"""
-    headers = {"Authorization": api_key, "Content-Type": "application/json"}
-    after = None
-    nodes: list[dict] = []
-    while True:
-        resp = requests.post(
-            LINEAR_URL,
-            json={"query": query, "variables": {"after": after}},
-            headers=headers,
-            timeout=30,
-        ).json()
-        page_nodes = safe_nodes(resp)
-        nodes.extend(page_nodes)
-        pg = resp["data"]["issues"]["pageInfo"]
-        if not pg["hasNextPage"]:
-            break
-        after = pg["endCursor"]
-    return nodes
 
 # ───────────────────────────────
 # Sidebar
@@ -252,7 +170,7 @@ linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
 # ───────────────────────────────
-# FETCH GAMES – fuzzy duplicate flag
+# FETCH GAMES – duplicate flag via contains-search
 # ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
@@ -284,8 +202,8 @@ if view == "Fetch Games":
             st.info("No launches for that date.")
 
         for n in day_nodes:
-            dup_url = fuzzy_duplicate(linear_key, n["title"], n["id"])
-            badge   = f" **🚩 duplicate**  ([existing]({dup_url}))" if dup_url else ""
+            dup_url = duplicate_contains(linear_key, n["title"], n["id"])
+            badge   = f" **🚩 duplicate** ([existing]({dup_url}))" if dup_url else ""
             my_url  = f"https://linear.app/issue/{n['id']}"
 
             st.subheader(n["title"] + badge)
