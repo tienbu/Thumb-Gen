@@ -27,31 +27,31 @@ def remember(field: str, label: str, *, pwd: bool = False) -> str:
     Text-input that stores its value in browser localStorage.
     Works even if the component isn’t installed yet.
     """
-    # 1️⃣ pull from localStorage → session_state
+    # 1) pull from localStorage → session_state
     if streamlit_js_eval and field not in st.session_state:
         stored = streamlit_js_eval(
             f"localStorage.getItem('{field}')",
+            label=f"get_{field}",          # ← required
             key=f"get_{field}",
-            label=f"get_{field}",          # <- added
         )
         if stored:
             st.session_state[field] = stored
 
-    # 2️⃣ show the input
+    # 2) show the input
     value = st.text_input(
         label,
         value=st.session_state.get(field, ""),
         type="password" if pwd else "default",
     )
 
-    # 3️⃣ save if changed
+    # 3) save if changed
     if value and value != st.session_state.get(field, ""):
         st.session_state[field] = value
         if streamlit_js_eval:
             streamlit_js_eval(
                 f"localStorage.setItem('{field}', `{value}`)",
+                label=f"set_{field}",      # ← required
                 key=f"set_{field}",
-                label=f"set_{field}",      # <- added
             )
 
     # optional clear
@@ -59,8 +59,8 @@ def remember(field: str, label: str, *, pwd: bool = False) -> str:
         if st.button("Clear saved key", key=f"clr_{field}"):
             streamlit_js_eval(
                 f"localStorage.removeItem('{field}')",
+                label=f"rm_{field}",       # ← required
                 key=f"rm_{field}",
-                label=f"rm_{field}",       # <- added
             )
             st.session_state.pop(field, None)
             value = ""
