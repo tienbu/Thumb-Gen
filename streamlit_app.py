@@ -15,56 +15,22 @@ SERVICE_B64 = st.secrets["GC_SERVICE_KEY_B64"]
 LINEAR_URL  = "https://api.linear.app/graphql"
 tinify.key  = TINIFY_KEY
 
-# ── localStorage helper (safe even if component missing) ─────────
-try:
-    from streamlit_js_eval import streamlit_js_eval
-except ModuleNotFoundError:
-    streamlit_js_eval = None
+# ───────────────────────────────
+# helper → remember creds in browser cookie
+# ───────────────────────────────
+COOKIE_AGE = 3600 * 24 * 365  # one year
 
 
-def remember(field: str, label: str, *, pwd: bool = False) -> str:
-    """
-    Text-input that stores its value in browser localStorage.
-    Works even if the component isn’t installed yet.
-    """
-    # 1) pull from localStorage → session_state
-    if streamlit_js_eval and field not in st.session_state:
-        stored = streamlit_js_eval(
-            f"localStorage.getItem('{field}')",
-            label=f"get_{field}",          # ← required
-            key=f"get_{field}",
-        )
-        if stored:
-            st.session_state[field] = stored
-
-    # 2) show the input
-    value = st.text_input(
-        label,
-        value=st.session_state.get(field, ""),
-        type="password" if pwd else "default",
-    )
-
-    # 3) save if changed
-    if value and value != st.session_state.get(field, ""):
-        st.session_state[field] = value
-        if streamlit_js_eval:
-            streamlit_js_eval(
-                f"localStorage.setItem('{field}', `{value}`)",
-                label=f"set_{field}",      # ← required
-                key=f"set_{field}",
-            )
-
-    # optional clear
-    if streamlit_js_eval and st.session_state.get(field):
-        if st.button("Clear saved key", key=f"clr_{field}"):
-            streamlit_js_eval(
-                f"localStorage.removeItem('{field}')",
-                label=f"rm_{field}",       # ← required
-                key=f"rm_{field}",
-            )
-            st.session_state.pop(field, None)
-            value = ""
-
+def remember(field: str, label: str, *, pwd=False) -> str:
+    saved = st.experimental_get_cookie(field)
+    value = st.text_input(label, value=saved or "", type="password" if pwd else "default")
+    if value and value != saved:
+        st.experimental_set_cookie(field, value, max_age=COOKIE_AGE, secure=True, httponly=True)
+    if saved and st.button(f"Clear saved {label.lower()}", key=f"clr_{field}"):
+        st.experimental_set_cookie(field, "", max_age=0)
+        st.session_state.pop(field, None)
+        value = ""
+        st.experimental_rerun()
     return value
 
 
@@ -78,19 +44,15 @@ SHEET_ID = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
 RANGE    = "Sheet1!A:Z"
 
 def get_provider_credentials():
-    rows = sheets.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=RANGE
-    ).execute().get("values", [])
+    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=RANGE).execute().get("values", [])
     if not rows:
         return {}
-
     hdr = [h.strip().lower() for h in rows[0]]
     i_name = hdr.index("provider name")
     i_url  = hdr.index("url")
     i_user = hdr.index("username")
     i_pass = hdr.index("password")
     i_al   = hdr.index("aliases") if "aliases" in hdr else None
-
     out = {}
     for r in rows[1:]:
         key = r[i_name].strip().lower() if len(r) > i_name else ""
@@ -108,54 +70,46 @@ def get_provider_credentials():
     return out
 
 # ───────────────────────────────
-# Linear comment helper (unused but kept)
-# ───────────────────────────────
-def post_comment(issue_id: str, body: str):
-    mutation = "mutation($input:IssueCommentCreateInput!){issueCommentCreate(input:$input){success}}"
-    vars = {"input": {"issueId": issue_id, "body": body}}
-    headers = {"Authorization": st.session_state["linear_key"],
-               "Content-Type": "application/json"}
-    requests.post(LINEAR_URL, json={"query": mutation, "variables": vars},
-                  headers=headers).raise_for_status()
-
-# ───────────────────────────────
-# Sidebar nav
+# Sidebar
 # ───────────────────────────────
 st.sidebar.title("Navigation")
 view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
 
 # ───────────────────────────────
-# Account tab
+# Account
 # ───────────────────────────────
 if view == "Account":
     st.markdown("# 👋 Welcome to Game Tools")
-    st.markdown("Paste your Linear API key once—your browser will remember it.")
 
     with st.expander("How to get your Linear API key"):
         st.markdown("""
 1. **Open Linear** → profile icon → **Settings**  
 2. **Security & Access** → **Personal API keys**  
-3. **New API key** → copy it (Linear shows it only once!)  
+3. Create a key, copy it (Linear shows it only once!)  
 4. Paste below.
-""")
+        """)
 
     key   = remember("linear_key",   "🔑 Linear API Key", pwd=True)
     state = remember("linear_state", "🗂️ Linear Column / State")
 
-    st.success("Saved locally ✔") if key else None
+    if key and state:
+        st.success("Credentials saved in your browser 👍")
     st.stop()
 
-# Guard
-if "linear_key" not in st.session_state or "linear_state" not in st.session_state:
-    st.error("Set your Linear credentials in the Account tab first.")
+# Guard creds
+if not st.experimental_get_cookie("linear_key") or not st.experimental_get_cookie("linear_state"):
+    st.error("Please set your Linear credentials in the **Account** tab.")
     st.stop()
+
+linear_key   = st.experimental_get_cookie("linear_key")
+linear_state = st.experimental_get_cookie("linear_state")
 
 # ───────────────────────────────
-# Fetch Games tab
+# Fetch Games
 # ───────────────────────────────
 if view == "Fetch Games":
     st.markdown("## 📋 Fetch game launches")
-    date_val = st.date_input("Choose a date", datetime.today())
+    date_val = st.date_input("Pick a date", datetime.today())
     date_str = date_val.strftime("%Y-%m-%d")
 
     if st.button("Fetch"):
@@ -164,15 +118,14 @@ if view == "Fetch Games":
   issues(filter: {{
     dueDate: {{eq:"{date_str}"}},
     labels: {{name: {{eq:"Game Launch"}}}},
-    state: {{name: {{eq:"{st.session_state['linear_state']}"}}}}
+    state: {{name: {{eq:"{linear_state}"}}}}
   }}) {{ nodes {{ id title }} }}
 }}"""
         }
-        r = requests.post(
-            LINEAR_URL,
-            headers={"Authorization": st.session_state["linear_key"],
-                     "Content-Type": "application/json"},
-            json=q)
+        r = requests.post(LINEAR_URL,
+                          headers={"Authorization": linear_key,
+                                   "Content-Type": "application/json"},
+                          json=q)
         r.raise_for_status()
         nodes = r.json()["data"]["issues"]["nodes"]
         st.session_state["issue_map"] = {n["title"]: n["id"] for n in nodes}
@@ -186,11 +139,10 @@ if view == "Fetch Games":
             st.subheader(n["title"])
             st.markdown(f"[🔗 Open in Linear]({issue_url})")
 
-            # provider matching (use aliases)
             prov_parts = [p.strip().lower()
                           for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
-            for key in prov_parts[::-1]:           # go from most-specific
+            for key in prov_parts[::-1]:  # most-specific first
                 for main, info in provs.items():
                     if key == main or key in info["aliases"]:
                         if main in shown:
@@ -207,7 +159,7 @@ if view == "Fetch Games":
     st.stop()
 
 # ───────────────────────────────
-# Thumbnails tab – portrait-only
+# Thumbnails  (portrait-only)
 # ───────────────────────────────
 if view == "Thumbnails":
     st.markdown("## 🖼️ Create & download thumbnail bundle")
