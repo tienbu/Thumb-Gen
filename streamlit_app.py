@@ -30,34 +30,35 @@ USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
 # Duplicate
 # ───────────────────────────────
 
-def duplicate_via_search(api_key: str, base_title: str, self_id: str) -> str | None:
+def duplicate_exact(api_key: str, base_title: str, self_id: str) -> str | None:
     """
-    Return the Linear URL of a duplicate Game-Launch issue, or None.
+    Return the URL of another open Game-Launch ticket whose *full* title equals
+    base_title (case-sensitive), or None if no duplicate.
     """
     query = """
-query ($term:String!, $self:String!){
-  issueSearch(
-    term:$term,
-    first:5,
+query($ttl:String!,$self:String!){
+  issues(
     filter:{
+      title:{eq:$ttl},
       labels:{name:{eq:"Game Launch"}},
       state:{type:{neq:COMPLETED}},
       id:{neq:$self}
-    }
-  ){ nodes{ id url title } }
+    },
+    first:1
+  ){ nodes{ url } }
 }"""
-    vars = {"term": base_title, "self": self_id}
     try:
         resp = requests.post(
             LINEAR_URL,
-            json={"query": query, "variables": vars},
+            json={"query": query, "variables": {"ttl": base_title, "self": self_id}},
             headers={"Authorization": api_key, "Content-Type": "application/json"},
             timeout=10,
         ).json()
-        dup_nodes = resp.get("data", {}).get("issueSearch", {}).get("nodes", [])
-        return dup_nodes[0]["url"] if dup_nodes else None
+        nodes = resp.get("data", {}).get("issues", {}).get("nodes", [])
+        return nodes[0]["url"] if nodes else None
     except requests.exceptions.RequestException:
-        return None          # network issue → treat as no duplicate
+        return None
+
 
 # ───────────────────────────────
 # Helpers  ─ providers & user-keys
