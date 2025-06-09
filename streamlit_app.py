@@ -40,9 +40,10 @@ def base_of(title: str) -> str:
 
 
 def build_duplicate_map(api_key: str, allowed_states: list[str]) -> dict[str, list[str]]:
-    """Fetch open Game‑Launch tickets in *allowed* columns once, build {clean_base:[url…]}"""
+    """Return {clean_base: [issue_url,…]} for open Game‑Launch tickets whose column is in allowed_states."""
 
     CLOSED_KEYWORDS = ["archive", "cancel", "complete"]
+    allow = [s.lower() for s in allowed_states]
 
     query = """
 query ($after:String){
@@ -55,16 +56,16 @@ query ($after:String){
     pageInfo{ hasNextPage endCursor }
   }
 }"""
-    hdr = {"Authorization": api_key, "Content-Type": "application/json"}
-    after = None; dup: dict[str, list[str]] = {}
-    allow = [s.lower() for s in allowed_states]
+
+    hdr   = {"Authorization": api_key, "Content-Type": "application/json"}
+    dup   : dict[str, list[str]] = {}
+    after = None
+
     while True:
         try:
-            resp = requests.post(
-                LINEAR_URL,
-                json={"query": query, "variables": {"after": after}},
-                headers=hdr, timeout=30
-            )
+            resp = requests.post(LINEAR_URL,
+                                 json={"query": query, "variables": {"after": after}},
+                                 headers=hdr, timeout=30)
             if resp is None:
                 break
             resp = resp.json()
@@ -84,20 +85,105 @@ query ($after:String){
                 continue
             dup.setdefault(_clean(base_of(n["title"])), []).append(n["url"])
 
-        pg = data.get("pageInfo", {})
-        if not pg.get("hasNextPage"):
+        page = data.get("pageInfo", {})
+        if not page.get("hasNextPage"):
             break
-        after = pg.get("endCursor")
+        after = page.get("endCursor")
     return dup
 
 # ───────────────────────────────
-#  PROVIDER & USER‑KEY HELPERS (unchanged)
+#  PROVIDER & USER‑KEY HELPERS
 # ───────────────────────────────
-# [...]  (KEEP THE REST OF YOUR EXISTING CODE, BUT REPLACE THE LINE THAT CALLS
-# build_duplicate_map WITH THE ONE BELOW)
 
-# Inside your Fetch‑Games tab, replace the previous call with:
-# dup_map = build_duplicate_map(
-#     linear_key,
-#     [linear_state, "games", "games done"]  # columns treated as active
-# )
+def safe_nodes(resp: dict) -> list[dict]:
+    if resp.get("errors"):
+        st.error("Linear error:\n" + json.dumps(resp["errors"], indent=2))
+        return []
+    return resp.get("data", {}).get("issues", {}).get("nodes", [])
+
+
+def load_user_keys():
+    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=USER_KEY_TAB)
+    rows = rows.execute().get("values", [])
+    return {r[0].lower(): {"key": r[1], "col": r[2]} for r in rows[1:] if len(r) >= 3}
+
+
+def save_user_key(name: str, key: str, col: str):
+    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=USER_KEY_TAB)
+    rows = rows.execute().get("values", [])
+    header, data = rows[0], rows[1:]
+    idx = next((i for i, r in enumerate(data) if r[0].lower() == name), None)
+    body = {"values": [[name, key, col]]}
+    if idx is None:
+        sheets.spreadsheets().values().append(spreadsheetId=SHEET_ID, range=USER_KEY_TAB,
+                                              valueInputOption="RAW", body=body).execute()
+    else:
+        rng = f"user_keys!A{idx+2}:C{idx+2}"
+        sheets.spreadsheets().values().update(spreadsheetId=SHEET_ID, range=rng,
+                                              valueInputOption="RAW", body=body).execute()
+
+
+def get_provider_credentials():
+    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=PROV_RANGE)
+    rows = rows.execute().get("values", [])
+    if not rows:
+        return {}
+    hdr = [h.lower().strip() for h in rows[0]]
+    ix = {c: hdr.index(c) for c in ["provider name", "url", "username", "password"]}
+    i_al = hdr.index("aliases") if "aliases" in hdr else None
+    out = {}
+    for r in rows[1:]:
+        name = r[ix["provider name"]].lower().strip() if len(r) > ix["provider name"] else ""
+        if not name:
+            continue
+        aliases = []
+        if i_al is not None and len(r) > i_al and r[i_al].strip():
+            aliases = [a.strip().lower() for a in r[i_al].split(",")]
+        out[name] = {
+            "url":      r[ix["url"]]      if len(r) > ix["url"]      else "",
+            "username": r[ix["username"]] if len(r) > ix["username"] else "",
+            "password": r[ix["password"]] if len(r) > ix["password"] else "",
+            "aliases":  aliases,
+        }
+    return out
+
+# ───────────────────────────────
+#  SIDEBAR & TAB NAVIGATION
+# ───────────────────────────────
+st.sidebar.title("Navigation")
+view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
+
+# ───────────────────────────────
+#  ACCOUNT TAB
+# ───────────────────────────────
+if view == "Account":
+    st.header("Account / credentials")
+    users = load_user_keys()
+    sel   = st.selectbox("Designer", list(users.keys()) + ["<new designer>"])
+    designer = st.text_input("Designer handle", "" if sel == "<new designer>" else sel)
+    prev = users.get(designer.lower(), {})
+    api_key_in = st.text_input("Linear API key", type="password", value=prev.get("key", ""))
+    col_in     = st.text_input("Column / State", value=prev.get("col", ""))
+    if st.button("Save / Update"):
+        if designer and api_key_in and col_in:
+            save_user_key(designer.lower(), api_key_in.strip(), col_in.strip())
+            st.session_state["linear_key"]   = api_key_in.strip()
+            st.session_state["linear_state"] = col_in.strip()
+            st.success("Saved. Reloading …")
+            st.experimental_rerun()
+        else:
+            st.error("All fields required.")
+    st.stop()
+
+# ---- guard creds ----
+if "linear_key" not in st.session_state or "linear_state" not in st.session_state:
+    st.warning("Set credentials in *Account* tab first.")
+    st.stop()
+
+linear_key   = st.session_state["linear_key"]
+linear_state = st.session_state["linear_state"]
+
+# ───────────────────────────────
+#  FETCH GAMES TAB
+# ───────────────────────────────
+if view == "
