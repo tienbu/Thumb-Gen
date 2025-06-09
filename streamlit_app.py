@@ -27,10 +27,10 @@ PROV_RANGE    = "Sheet1!A:Z"
 USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
 
 # ───────────────────────────────
-# Helpers
+# Helpers  ─ providers & user-keys
 # ───────────────────────────────
 def safe_nodes(resp: dict) -> list[dict]:
-    """Return resp['data']['issues']['nodes'] or [] and surface GraphQL errors."""
+    """Return resp['data']['issues']['nodes'] or [] and surface errors."""
     if "errors" in resp and resp["errors"]:
         st.error("Linear API error:\n" + json.dumps(resp["errors"], indent=2))
         return []
@@ -39,8 +39,7 @@ def safe_nodes(resp: dict) -> list[dict]:
 
 def load_user_keys():
     rows = sheets.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=USER_KEY_TAB
-    ).execute().get("values", [])
+        spreadsheetId=SHEET_ID, range=USER_KEY_TAB).execute().get("values", [])
     return {
         r[0].strip().lower(): {
             "key": r[1].strip() if len(r) > 1 else "",
@@ -52,16 +51,15 @@ def load_user_keys():
 
 def save_user_key(name: str, key: str, col: str):
     rows = sheets.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=USER_KEY_TAB
-    ).execute().get("values", [])
+        spreadsheetId=SHEET_ID, range=USER_KEY_TAB).execute().get("values", [])
     header, data = rows[0], rows[1:]
     idx = next((i for i, r in enumerate(data) if r[0].lower() == name), None)
     body = {"values": [[name, key, col]]}
-    if idx is None:  # append
+    if idx is None:
         sheets.spreadsheets().values().append(
             spreadsheetId=SHEET_ID, range=USER_KEY_TAB,
             valueInputOption="RAW", body=body).execute()
-    else:            # update
+    else:
         rng = f"user_keys!A{idx+2}:C{idx+2}"
         sheets.spreadsheets().values().update(
             spreadsheetId=SHEET_ID, range=rng,
@@ -70,8 +68,7 @@ def save_user_key(name: str, key: str, col: str):
 
 def get_provider_credentials():
     rows = sheets.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=PROV_RANGE
-    ).execute().get("values", [])
+        spreadsheetId=SHEET_ID, range=PROV_RANGE).execute().get("values", [])
     if not rows:
         return {}
     hdr = [h.strip().lower() for h in rows[0]]
@@ -97,7 +94,43 @@ def get_provider_credentials():
     return out
 
 # ───────────────────────────────
-# Sidebar nav
+# Linear helper — paginate all open Game-Launch issues
+# ───────────────────────────────
+def fetch_all_open_game_launches(api_key: str) -> list[dict]:
+    query = """
+query ($after:String){
+  issues(
+    filter:{
+      labels:{name:{eq:"Game Launch"}},
+      state:{type:{neq:COMPLETED}}
+    },
+    first:250,
+    after:$after
+  ){
+    nodes{ id title }
+    pageInfo{ hasNextPage endCursor }
+  }
+}"""
+    headers = {"Authorization": api_key, "Content-Type": "application/json"}
+    after = None
+    nodes: list[dict] = []
+    while True:
+        resp = requests.post(
+            LINEAR_URL,
+            json={"query": query, "variables": {"after": after}},
+            headers=headers,
+            timeout=30,
+        ).json()
+        page_nodes = safe_nodes(resp)
+        nodes.extend(page_nodes)
+        pg = resp["data"]["issues"]["pageInfo"]
+        if not pg["hasNextPage"]:
+            break
+        after = pg["endCursor"]
+    return nodes
+
+# ───────────────────────────────
+# Sidebar
 # ───────────────────────────────
 st.sidebar.title("Navigation")
 view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
@@ -128,17 +161,17 @@ if view == "Account":
             st.success("Saved!  You may now use the other tabs.")
     st.stop()
 
-# Guard creds
+# guard creds
 if "linear_key" not in st.session_state or "linear_state" not in st.session_state:
-    st.error("Go to **Account** tab first and save credentials.")
+    st.error("Go to **Account** and save credentials first.")
     st.stop()
 
 linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
-# ────────────────────────────────────────────────────────────────
-# FETCH GAMES  — duplicate check across ALL open Game Launches
-# ────────────────────────────────────────────────────────────────
+# ───────────────────────────────
+# FETCH GAMES TAB
+# ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
     date_val = st.date_input("Pick a date", datetime.today())
@@ -147,7 +180,7 @@ if view == "Fetch Games":
     if st.button("Fetch"):
         with st.spinner("Querying Linear…"):
             try:
-                # --- issues for selected day ---
+                # Day-specific issues
                 day_q = {"query": f"""query {{
   issues(filter:{{
     dueDate:{{eq:"{date_str}"}},
@@ -158,42 +191,29 @@ if view == "Fetch Games":
                 day_nodes = safe_nodes(
                     requests.post(
                         LINEAR_URL,
+                        json=day_q,
                         headers={"Authorization": linear_key,
                                  "Content-Type": "application/json"},
-                        json=day_q,
-                        timeout=20,             # ← timeout
+                        timeout=30,
                     ).json()
                 )
                 st.session_state["issue_map"] = {n["title"]: n["id"] for n in day_nodes}
 
-                # --- ALL open Game Launch issues ---
-                all_q = {"query": """query {
-  issues(filter:{
-    labels:{name:{eq:"Game Launch"}},
-    state:{type:{neq:COMPLETED}}
-  }, first:500){ nodes{ id title } }
-}"""}
-                all_nodes = safe_nodes(
-                    requests.post(
-                        LINEAR_URL,
-                        headers={"Authorization": linear_key,
-                                 "Content-Type": "application/json"},
-                        json=all_q,
-                        timeout=20,             # ← timeout
-                    ).json()
-                )
+                # All open Game-Launch issues (paginated)
+                all_nodes = fetch_all_open_game_launches(linear_key)
+
             except requests.exceptions.RequestException as e:
                 st.error(f"Linear request failed: {e}")
                 st.stop()
 
-        # ----- duplicate detection & UI (unchanged) -----
-        name_count = {}
+        # Duplicate detection
+        counts = {}
         for n in all_nodes:
             g = n["title"].split(" - ")[0].strip().lower()
-            name_count[g] = name_count.get(g, 0) + 1
-        dup = {n for n, c in name_count.items() if c > 1}
-        if dup:
-            st.warning("⚠️ Duplicate games: " + ", ".join(sorted(dup)))
+            counts[g] = counts.get(g, 0) + 1
+        duplicates = {n for n, c in counts.items() if c > 1}
+        if duplicates:
+            st.warning("⚠️ Duplicate games: " + ", ".join(sorted(duplicates)))
 
         provs = get_provider_credentials()
         if not day_nodes:
@@ -201,12 +221,11 @@ if view == "Fetch Games":
 
         for n in day_nodes:
             base = n["title"].split(" - ")[0].strip().lower()
-            badge = " **🚩 duplicate**" if base in dup else ""
-            url   = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
+            badge = " **🚩 duplicate**" if base in duplicates else ""
+            issue_url = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
             st.subheader(n["title"] + badge)
-            st.markdown(f"[🔗 Open in Linear]({url})")
+            st.markdown(f"[🔗 Open in Linear]({issue_url})")
 
-            # provider display (unchanged) …
             prov_parts = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
             for k in prov_parts[::-1]:
