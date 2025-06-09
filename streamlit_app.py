@@ -15,59 +15,46 @@ SERVICE_B64 = st.secrets["GC_SERVICE_KEY_B64"]
 LINEAR_URL  = "https://api.linear.app/graphql"
 tinify.key  = TINIFY_KEY
 
-# ───────────────────────────────
-# helper → remember creds in browser cookie
-# ───────────────────────────────
-COOKIE_AGE = 3600 * 24 * 365  # one year
+# ── localStorage helper (works with 0.1.3) ───────────────────────
+try:
+    from streamlit_js_eval import streamlit_js_eval
+except ModuleNotFoundError:
+    streamlit_js_eval = None
 
 
 def remember(field: str, label: str, *, pwd=False) -> str:
-    saved = st.experimental_get_cookie(field)
-    value = st.text_input(label, value=saved or "", type="password" if pwd else "default")
-    if value and value != saved:
-        st.experimental_set_cookie(field, value, max_age=COOKIE_AGE, secure=True, httponly=True)
-    if saved and st.button(f"Clear saved {label.lower()}", key=f"clr_{field}"):
-        st.experimental_set_cookie(field, "", max_age=0)
-        st.session_state.pop(field, None)
-        value = ""
-        st.experimental_rerun()
+    """Text-input that persists to browser localStorage (0.1.3 API)."""
+    if streamlit_js_eval and field not in st.session_state:
+        stored = streamlit_js_eval(
+            f"localStorage.getItem('{field}')",   # js to run
+            key=f"get_{field}",                   # Streamlit widget key
+        )
+        if stored:
+            st.session_state[field] = stored
+
+    value = st.text_input(label,
+                          value=st.session_state.get(field, ""),
+                          type="password" if pwd else "default")
+
+    if value and value != st.session_state.get(field, ""):
+        st.session_state[field] = value
+        if streamlit_js_eval:
+            streamlit_js_eval(
+                f"localStorage.setItem('{field}', `{value}`)",
+                key=f"set_{field}",
+            )
+
+    if streamlit_js_eval and st.session_state.get(field):
+        if st.button("Clear saved key", key=f"clr_{field}"):
+            streamlit_js_eval(
+                f"localStorage.removeItem('{field}')",
+                key=f"rm_{field}",
+            )
+            st.session_state.pop(field, None)
+            value = ""
+            st.experimental_rerun()
+
     return value
-
-
-# ───────────────────────────────
-# Google-Sheets helper
-# ───────────────────────────────
-SA_INFO = json.loads(base64.b64decode(SERVICE_B64))
-creds   = Credentials.from_service_account_info(SA_INFO)
-sheets  = build("sheets", "v4", credentials=creds)
-SHEET_ID = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
-RANGE    = "Sheet1!A:Z"
-
-def get_provider_credentials():
-    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=RANGE).execute().get("values", [])
-    if not rows:
-        return {}
-    hdr = [h.strip().lower() for h in rows[0]]
-    i_name = hdr.index("provider name")
-    i_url  = hdr.index("url")
-    i_user = hdr.index("username")
-    i_pass = hdr.index("password")
-    i_al   = hdr.index("aliases") if "aliases" in hdr else None
-    out = {}
-    for r in rows[1:]:
-        key = r[i_name].strip().lower() if len(r) > i_name else ""
-        if not key:
-            continue
-        aliases = []
-        if i_al is not None and len(r) > i_al and r[i_al].strip():
-            aliases = [a.strip().lower() for a in r[i_al].split(",")]
-        out[key] = {
-            "url":      r[i_url].strip()  if len(r) > i_url  else "",
-            "username": r[i_user].strip() if len(r) > i_user else "",
-            "password": r[i_pass].strip() if len(r) > i_pass else "",
-            "aliases":  aliases,
-        }
-    return out
 
 # ───────────────────────────────
 # Sidebar
