@@ -27,8 +27,47 @@ PROV_RANGE    = "Sheet1!A:Z"
 USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
 
 # ───────────────────────────────
-# Provider-sheet helper
+# Helpers
 # ───────────────────────────────
+def safe_nodes(resp: dict) -> list[dict]:
+    """Return resp['data']['issues']['nodes'] or [] and surface GraphQL errors."""
+    if "errors" in resp and resp["errors"]:
+        st.error("Linear API error:\n" + json.dumps(resp["errors"], indent=2))
+        return []
+    return resp.get("data", {}).get("issues", {}).get("nodes", [])
+
+
+def load_user_keys():
+    rows = sheets.spreadsheets().values().get(
+        spreadsheetId=SHEET_ID, range=USER_KEY_TAB
+    ).execute().get("values", [])
+    return {
+        r[0].strip().lower(): {
+            "key": r[1].strip() if len(r) > 1 else "",
+            "col": r[2].strip() if len(r) > 2 else "",
+        }
+        for r in rows[1:] if r and r[0].strip()
+    }
+
+
+def save_user_key(name: str, key: str, col: str):
+    rows = sheets.spreadsheets().values().get(
+        spreadsheetId=SHEET_ID, range=USER_KEY_TAB
+    ).execute().get("values", [])
+    header, data = rows[0], rows[1:]
+    idx = next((i for i, r in enumerate(data) if r[0].lower() == name), None)
+    body = {"values": [[name, key, col]]}
+    if idx is None:  # append
+        sheets.spreadsheets().values().append(
+            spreadsheetId=SHEET_ID, range=USER_KEY_TAB,
+            valueInputOption="RAW", body=body).execute()
+    else:            # update
+        rng = f"user_keys!A{idx+2}:C{idx+2}"
+        sheets.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID, range=rng,
+            valueInputOption="RAW", body=body).execute()
+
+
 def get_provider_credentials():
     rows = sheets.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=PROV_RANGE
@@ -43,7 +82,7 @@ def get_provider_credentials():
     i_al   = hdr.index("aliases") if "aliases" in hdr else None
     out = {}
     for r in rows[1:]:
-        if len(r) <= i_name or not r[i_name]:
+        if len(r) <= i_name or not r[i_name].strip():
             continue
         key = r[i_name].strip().lower()
         aliases = []
@@ -58,53 +97,7 @@ def get_provider_credentials():
     return out
 
 # ───────────────────────────────
-# user_keys helpers
-# ───────────────────────────────
-def load_user_keys():
-    """Return dict {designer: {'key':…, 'col':…}} from user_keys tab."""
-    rows = sheets.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=USER_KEY_TAB
-    ).execute().get("values", [])
-    # rows[0] is header; skip it
-    return {
-        r[0].strip().lower(): {
-            "key": r[1].strip() if len(r) > 1 else "",
-            "col": r[2].strip() if len(r) > 2 else "",
-        }
-        for r in rows[1:]
-        if r and r[0].strip()
-    }
-
-def save_user_key(name: str, key: str, col: str):
-    """Insert or update a designer row in user_keys tab."""
-    rows = sheets.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=USER_KEY_TAB
-    ).execute().get("values", [])
-    header, data = rows[0], rows[1:]
-    # find row (if exists)
-    idx = next((i for i, r in enumerate(data) if r[0].lower() == name), None)
-    row_vals = [name, key, col]
-    body = {"values": [row_vals]}
-    if idx is None:
-        # append
-        sheets.spreadsheets().values().append(
-            spreadsheetId=SHEET_ID,
-            range=USER_KEY_TAB,
-            valueInputOption="RAW",
-            body=body,
-        ).execute()
-    else:
-        # update (offset by +2 for header + 1-index)
-        rng = f"user_keys!A{idx+2}:C{idx+2}"
-        sheets.spreadsheets().values().update(
-            spreadsheetId=SHEET_ID,
-            range=rng,
-            valueInputOption="RAW",
-            body=body,
-        ).execute()
-
-# ───────────────────────────────
-# Sidebar
+# Sidebar nav
 # ───────────────────────────────
 st.sidebar.title("Navigation")
 view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
@@ -116,52 +109,43 @@ if view == "Account":
     st.header("Account / credentials")
 
     users = load_user_keys()
-    existing_names = list(users.keys())
-    choice = st.selectbox("Designer", existing_names + ["<new designer>"])
-    if choice == "<new designer>":
-        designer = st.text_input("Enter your designer handle (lowercase)")
-    else:
-        designer = choice
+    existing = list(users.keys())
+    choice = st.selectbox("Designer", existing + ["<new designer>"])
+    designer = st.text_input("Designer handle (lowercase)",
+                             value="" if choice == "<new designer>" else choice)
 
-    prev_key = users.get(designer, {}).get("key", "")
-    prev_col = users.get(designer, {}).get("col", "")
-
-    key   = st.text_input("🔑 Linear API Key", type="password", value=prev_key)
-    col   = st.text_input("🗂️ Linear Column / State", value=prev_col)
+    prev = users.get(designer.lower(), {})
+    key  = st.text_input("🔑 Linear API Key", type="password", value=prev.get("key", ""))
+    col  = st.text_input("🗂️ Column / State", value=prev.get("col", ""))
 
     if st.button("Save / Update"):
-        if not designer:
-            st.error("Designer name is required.")
-        elif not key or not col:
-            st.error("Both key and column are required.")
+        if not designer or not key or not col:
+            st.error("Designer, key and column are required.")
         else:
             save_user_key(designer.lower(), key.strip(), col.strip())
             st.session_state["linear_key"]   = key.strip()
             st.session_state["linear_state"] = col.strip()
-            st.session_state["designer"]     = designer.lower()
             st.success("Saved!  You may now use the other tabs.")
     st.stop()
 
-# Guard credentials
+# Guard creds
 if "linear_key" not in st.session_state or "linear_state" not in st.session_state:
-    st.error("Go to **Account** tab first and save your credentials.")
+    st.error("Go to **Account** tab first and save credentials.")
     st.stop()
 
 linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
-# ────────────────────────────────────────────────────────────────
-# FETCH GAMES  — duplicate check across ALL open Game Launches
-# ────────────────────────────────────────────────────────────────
+# ───────────────────────────────
+# FETCH GAMES TAB  (global duplicate check)
+# ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
     date_val = st.date_input("Pick a date", datetime.today())
     date_str = date_val.strftime("%Y-%m-%d")
 
     if st.button("Fetch"):
-        ##############################
-        # 1. issues for the selected day
-        ##############################
+        # --- issues for selected day ---
         day_query = {
             "query": f"""query {{
   issues(filter:{{
@@ -169,56 +153,46 @@ if view == "Fetch Games":
     labels:{{name:{{eq:"Game Launch"}}}},
     state:{{name:{{eq:"{linear_state}"}}}}
   }}, first:250){{nodes{{id title}}}}
-}}"""}                                                     # noqa
-        day_resp = requests.post(
-            LINEAR_URL,
-            headers={"Authorization": linear_key, "Content-Type": "application/json"},
-            json=day_query,
-        ).json()
-        day_nodes = day_resp["data"]["issues"]["nodes"]
+}}"""}
+        day_nodes = safe_nodes(requests.post(
+            LINEAR_URL, headers={"Authorization": linear_key,
+                                 "Content-Type": "application/json"},
+            json=day_query).json())
         st.session_state["issue_map"] = {n["title"]: n["id"] for n in day_nodes}
 
-        ##############################
-        # 2. every open Game Launch issue (across dates / columns)
-        ##############################
+        # --- ALL open Game Launch issues (any column / date) ---
         all_query = {
             "query": """query {
   issues(filter:{
     labels:{name:{eq:"Game Launch"}},
-    state:{type:{neq:COMPLETED}}      # anything not Done/Canceled
-  }, first:500){
-    nodes{ id title }
-  }}
-"""}
-        all_resp = requests.post(
-            LINEAR_URL,
-            headers={"Authorization": linear_key, "Content-Type": "application/json"},
-            json=all_query,
-        ).json()
-        all_nodes = all_resp["data"]["issues"]["nodes"]
+    state:{type:{neq:COMPLETED}}
+  }, first:500){ nodes{ id title } }
+}"""}
+        all_nodes = safe_nodes(requests.post(
+            LINEAR_URL, headers={"Authorization": linear_key,
+                                 "Content-Type": "application/json"},
+            json=all_query).json())
 
-        # ----- duplicate detection across ALL open issues -----
+        # duplicate detection
         name_count = {}
         for n in all_nodes:
-            gname = n["title"].split(" - ")[0].strip().lower()
-            name_count[gname] = name_count.get(gname, 0) + 1
-        dup_names = {n for n, c in name_count.items() if c > 1}
-        if dup_names:
-            st.warning("⚠️ Duplicate games exist: " + ", ".join(sorted(dup_names)))
+            g = n["title"].split(" - ")[0].strip().lower()
+            name_count[g] = name_count.get(g, 0) + 1
+        duplicates = {n for n, c in name_count.items() if c > 1}
+        if duplicates:
+            st.warning("⚠️ Duplicate games: " + ", ".join(sorted(duplicates)))
 
-        # ---------- show the day list (with 🚩 badge) ----------
         provs = get_provider_credentials()
         if not day_nodes:
             st.info("No launches for that date.")
 
         for n in day_nodes:
+            base = n["title"].split(" - ")[0].strip().lower()
+            dup_badge = " **🚩 duplicate**" if base in duplicates else ""
             issue_url = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
-            base_name = n["title"].split(" - ")[0].strip().lower()
-            dup_badge = " **🚩 duplicate**" if base_name in dup_names else ""
             st.subheader(n["title"] + dup_badge)
             st.markdown(f"[🔗 Open in Linear]({issue_url})")
 
-            # ----- provider info (unchanged) -----
             prov_parts = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
             for key in prov_parts[::-1]:
@@ -274,8 +248,8 @@ if view == "Thumbnails":
 
         p_zip = io.BytesIO()
         with zipfile.ZipFile(p_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for f, b in folders["Portrait"].items():
-                zf.writestr(f, b)
+            for fname, blob in folders["Portrait"].items():
+                zf.writestr(fname, blob)
         p_zip.seek(0)
 
         bundle = io.BytesIO()
@@ -286,10 +260,8 @@ if view == "Thumbnails":
             zf.writestr("portrait.zip", p_zip.read())
         bundle.seek(0)
 
-        st.download_button(
-            "⬇️ Download bundle",
-            bundle,
-            file_name=f"{game_name or 'game'}_bundle.zip",
-            mime="application/zip",
-        )
+        st.download_button("⬇️ Download bundle",
+                           bundle,
+                           file_name=f"{game_name or 'game'}_bundle.zip",
+                           mime="application/zip")
         st.success("✅ Bundle ready!")
