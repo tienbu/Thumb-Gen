@@ -63,6 +63,54 @@ query($ttl:String!,$self:String!){
 # ───────────────────────────────
 # Helpers  ─ providers & user-keys
 # ───────────────────────────────
+import re, difflib
+
+def clean(txt: str) -> str:
+    """lower-case; keep alphanumerics only"""
+    return re.sub(r"[^a-z0-9]", "", txt.lower())
+
+
+def fuzzy_duplicate(api_key: str, full_title: str, self_id: str) -> str | None:
+    """
+    Return the URL of an *open* Game-Launch ticket whose BASE title
+    is ≥80 % similar to this one (case/spacing/punctuation insensitive),
+    or None if none found.
+    """
+    base = full_title.split(" - ")[0].strip()
+    term = " ".join(base.split()[:4])            # first few words are enough
+
+    query = """
+query ($term:String!,$self:String!){
+  issueSearch(
+    term:$term,
+    first:15,
+    filter:{
+      labels:{name:{eq:"Game Launch"}},
+      state:{type:{neq:COMPLETED}},
+      id:{neq:$self}
+    }
+  ){ nodes{ id title url } }
+}"""
+    try:
+        resp = requests.post(
+            LINEAR_URL,
+            json={"query": query, "variables": {"term": term, "self": self_id}},
+            headers={"Authorization": api_key, "Content-Type": "application/json"},
+            timeout=10,
+        ).json()
+        nodes = resp.get("data", {}).get("issueSearch", {}).get("nodes", [])
+        cb = clean(base)
+        for n in nodes:
+            other_base = n["title"].split(" - ")[0].strip()
+            sim = difflib.SequenceMatcher(None, cb, clean(other_base)).ratio()
+            if sim >= 0.80:                    # tweak threshold if needed
+                return n["url"]
+        return None
+    except requests.exceptions.RequestException:
+        return None
+
+# ───────────────────────────────
+
 def safe_nodes(resp: dict) -> list[dict]:
     """Return resp['data']['issues']['nodes'] or [] and surface errors."""
     if "errors" in resp and resp["errors"]:
@@ -204,7 +252,7 @@ linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
 # ───────────────────────────────
-# FETCH GAMES  — per-title duplicate check
+# FETCH GAMES – fuzzy duplicate flag
 # ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
@@ -212,7 +260,7 @@ if view == "Fetch Games":
     date_str = date_val.strftime("%Y-%m-%d")
 
     if st.button("Fetch"):
-        with st.spinner("Loading today’s list…"):
+        with st.spinner("Loading day’s list…"):
             day_q = {"query": f"""query {{
   issues(filter:{{
     dueDate:{{eq:"{date_str}"}},
@@ -236,18 +284,14 @@ if view == "Fetch Games":
             st.info("No launches for that date.")
 
         for n in day_nodes:
-            base_title = n["title"]                         # full title
-            dup_url    = duplicate_exact(linear_key, base_title, n["id"])
-        
-            badge = f" **🚩 duplicate**  ([existing]({dup_url}))" if dup_url else ""
-        
-            # build the link from the ID (no KeyError)
-            my_url = f"https://linear.app/issue/{n['id']}"
-        
+            dup_url = fuzzy_duplicate(linear_key, n["title"], n["id"])
+            badge   = f" **🚩 duplicate**  ([existing]({dup_url}))" if dup_url else ""
+            my_url  = f"https://linear.app/issue/{n['id']}"
+
             st.subheader(n["title"] + badge)
             st.markdown(f"[🔗 Open in Linear]({my_url})")
-        
-            # ---------- provider info (unchanged) ----------
+
+            # ---------- provider info ----------
             prov_parts = [p.strip().lower()
                           for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
@@ -260,12 +304,10 @@ if view == "Fetch Games":
                             st.markdown(f"[Provider link]({info['url']})")
                         if info["username"] or info["password"]:
                             st.code(f"User: {info['username']}\nPass: {info['password']}")
-                        shown.add(main)
-                        break
+                        shown.add(main); break
             if not shown:
                 st.warning("No provider info: " + ", ".join(prov_parts))
             st.divider()
-
     st.stop()
 
 # ───────────────────────────────
