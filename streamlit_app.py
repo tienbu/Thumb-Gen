@@ -40,7 +40,7 @@ def base_of(title: str) -> str:
 
 
 def build_duplicate_map(api_key: str, allowed_states: list[str]) -> dict[str, list[str]]:
-    """Return {clean_base: [issue_url,…]} for open Game‑Launch tickets whose column is in allowed_states."""
+    """Return {clean_base: [url,…]} for open Game‑Launch tickets whose column name is in allowed_states."""
 
     CLOSED_KEYWORDS = ["archive", "cancel", "complete"]
     allow = [s.lower() for s in allowed_states]
@@ -103,14 +103,12 @@ def safe_nodes(resp: dict) -> list[dict]:
 
 
 def load_user_keys():
-    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=USER_KEY_TAB)
-    rows = rows.execute().get("values", [])
+    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=USER_KEY_TAB).execute().get("values", [])
     return {r[0].lower(): {"key": r[1], "col": r[2]} for r in rows[1:] if len(r) >= 3}
 
 
 def save_user_key(name: str, key: str, col: str):
-    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=USER_KEY_TAB)
-    rows = rows.execute().get("values", [])
+    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=USER_KEY_TAB).execute().get("values", [])
     header, data = rows[0], rows[1:]
     idx = next((i for i, r in enumerate(data) if r[0].lower() == name), None)
     body = {"values": [[name, key, col]]}
@@ -124,8 +122,7 @@ def save_user_key(name: str, key: str, col: str):
 
 
 def get_provider_credentials():
-    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=PROV_RANGE)
-    rows = rows.execute().get("values", [])
+    rows = sheets.spreadsheets().values().get(spreadsheetId=SHEET_ID, range=PROV_RANGE).execute().get("values", [])
     if not rows:
         return {}
     hdr = [h.lower().strip() for h in rows[0]]
@@ -186,4 +183,6 @@ linear_state = st.session_state["linear_state"]
 # ───────────────────────────────
 #  FETCH GAMES TAB
 # ───────────────────────────────
-if view == "
+if view == "Fetch Games":
+    st.header("📋 Fetch game launches")
+    dt = st.date
