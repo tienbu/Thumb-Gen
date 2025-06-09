@@ -231,7 +231,7 @@ if view == "Fetch Games":
                             st.markdown(f"[Provider link]({info['url']})")
                         if info["username"] or info["password"]:
                             st.code(f"User: {info['username']}
-Pass: {info['password']}")
+                            Pass: {info['password']}")
                         shown.add(prov)
                         break
             if not shown:
