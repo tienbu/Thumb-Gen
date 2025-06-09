@@ -1,5 +1,4 @@
 streamlit==1.30.0             # stable on Cloud
-streamlit-js-eval==0.1.4      # one line, dash style
 tinify
 httpx
 requests
