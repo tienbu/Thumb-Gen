@@ -15,42 +15,56 @@ SERVICE_B64 = st.secrets["GC_SERVICE_KEY_B64"]
 LINEAR_URL  = "https://api.linear.app/graphql"
 tinify.key  = TINIFY_KEY
 
-# ───────────────────────────────
-# localStorage helper  (works with streamlit-js-eval 0.1.4)
-# ───────────────────────────────
+# ── localStorage helper (works with js-eval ≥0.1.4) ──────────────
 try:
     from streamlit_js_eval import streamlit_js_eval
 except ModuleNotFoundError:
-    streamlit_js_eval = None                       # app still runs
+    streamlit_js_eval = None
 
-def remember(field: str, label: str, *, pwd=False) -> str:
-    """Persistent text_input using window.localStorage (per-browser)."""
+
+def remember(field: str, label: str, *, pwd: bool = False) -> str:
+    """
+    Persistent text_input backed by window.localStorage.
+    Requires streamlit-js-eval 0.1.4 (label+key+default signature).
+    Falls back gracefully if the component isn’t installed yet.
+    """
+    # 1️⃣ read from localStorage → session_state
     if streamlit_js_eval and field not in st.session_state:
         stored = streamlit_js_eval(
             f"localStorage.getItem('{field}')",
-            label=f"get_{field}", key=f"get_{field}",
+            label=f"get_{field}",           # required
+            key=f"get_{field}",             # required
+            default="",                     # required
         )
         if stored:
             st.session_state[field] = stored
 
+    # 2️⃣ show the input
     value = st.text_input(
-        label, value=st.session_state.get(field, ""),
-        type="password" if pwd else "default"
+        label,
+        value=st.session_state.get(field, ""),
+        type="password" if pwd else "default",
     )
 
+    # 3️⃣ save if changed
     if value and value != st.session_state.get(field, ""):
         st.session_state[field] = value
         if streamlit_js_eval:
             streamlit_js_eval(
                 f"localStorage.setItem('{field}', `{value}`)",
-                label=f"set_{field}", key=f"set_{field}",
+                label=f"set_{field}",
+                key=f"set_{field}",
+                default=None,
             )
 
+    # 4️⃣ clear button
     if streamlit_js_eval and st.session_state.get(field):
         if st.button("Clear saved key", key=f"clr_{field}"):
             streamlit_js_eval(
                 f"localStorage.removeItem('{field}')",
-                label=f"rm_{field}", key=f"rm_{field}",
+                label=f"rm_{field}",
+                key=f"rm_{field}",
+                default=None,
             )
             st.session_state.pop(field, None)
             st.experimental_rerun()
