@@ -15,7 +15,7 @@ SERVICE_B64 = st.secrets["GC_SERVICE_KEY_B64"]
 LINEAR_URL  = "https://api.linear.app/graphql"
 tinify.key  = TINIFY_KEY
 
-# ── localStorage helper (Streamlit Cloud tested, js-eval 0.1.4) ──
+# ── localStorage helper (no infinite rerun) ─────────────────────
 import json, streamlit as st
 try:
     from streamlit_js_eval import streamlit_js_eval
@@ -24,9 +24,14 @@ except ModuleNotFoundError:
 
 
 def remember(field: str, label: str, *, pwd=False) -> str:
-    """Text-input that persists to window.localStorage (per-browser)."""
-    # 1️⃣ Pull once from localStorage → session_state
-    if streamlit_js_eval and field not in st.session_state:
+    """
+    Persistent text_input saved in window.localStorage.
+    Works with streamlit-js-eval 0.1.4 without looping.
+    """
+    flag = f"_{field}_loaded"          # sentinel to avoid infinite rerun
+
+    # 1️⃣ one-time pull from localStorage
+    if streamlit_js_eval and not st.session_state.get(flag, False):
         raw = streamlit_js_eval(
             label=f"get_{field}",
             code=f"localStorage.getItem('{field}')",
@@ -35,24 +40,24 @@ def remember(field: str, label: str, *, pwd=False) -> str:
         )
         if raw:
             try:
-                st.session_state[field] = json.loads(raw)  # remove quotes
+                st.session_state[field] = json.loads(raw)
             except json.JSONDecodeError:
                 st.session_state[field] = raw
-        # Trigger one rerun so the input shows the value immediately
+        st.session_state[flag] = True   # mark done
         st.experimental_rerun()
 
-    # 2️⃣ Show the input
+    # 2️⃣ show input
     value = st.text_input(
         label,
         value=st.session_state.get(field, ""),
         type="password" if pwd else "default",
     )
 
-    # 3️⃣ Save back if changed
+    # 3️⃣ save if changed
     if value and value != st.session_state.get(field, ""):
         st.session_state[field] = value
         if streamlit_js_eval:
-            js_val = json.dumps(value)  # safe for JS
+            js_val = json.dumps(value)
             streamlit_js_eval(
                 label=f"set_{field}",
                 code=f"localStorage.setItem('{field}', {js_val})",
@@ -60,7 +65,7 @@ def remember(field: str, label: str, *, pwd=False) -> str:
                 default=None,
             )
 
-    # 4️⃣ Clear button
+    # 4️⃣ clear
     if streamlit_js_eval and st.session_state.get(field):
         if st.button("Clear saved key", key=f"clr_{field}"):
             streamlit_js_eval(
@@ -70,6 +75,7 @@ def remember(field: str, label: str, *, pwd=False) -> str:
                 default=None,
             )
             st.session_state.pop(field, None)
+            st.session_state.pop(flag, None)
             st.experimental_rerun()
 
     return value
