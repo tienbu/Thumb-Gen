@@ -7,7 +7,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
 # ───────────────────────────────
-# Page & secrets
+#  PAGE & SECRETS
 # ───────────────────────────────
 st.set_page_config(page_title="Game Tools", page_icon="🎮", layout="wide")
 TINIFY_KEY  = st.secrets["TINIFY_API_KEY"]
@@ -16,7 +16,7 @@ LINEAR_URL  = "https://api.linear.app/graphql"
 tinify.key  = TINIFY_KEY
 
 # ───────────────────────────────
-# Google Sheets client
+#  GOOGLE-SHEETS CLIENT
 # ───────────────────────────────
 SA_INFO = json.loads(base64.b64decode(SERVICE_B64))
 creds   = Credentials.from_service_account_info(SA_INFO)
@@ -27,47 +27,51 @@ PROV_RANGE    = "Sheet1!A:Z"
 USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
 
 # ───────────────────────────────
-# DUPLICATE-DETECTION HELPER (provider part ignored, case/spacing tolerant)
+#  DUPLICATE UTILITIES
 # ───────────────────────────────
-def _clean(t: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", t.lower())
+def _clean(txt: str) -> str:
+    """lower-case, ASCII dash, remove non-alphanum"""
+    txt = txt.replace("–", "-").replace("—", "-")
+    return re.sub(r"[^a-z0-9]", "", txt.lower())
 
-def duplicate_contains(api_key: str, full_title: str, self_id: str) -> str | None:
+def base_of(title: str) -> str:
+    """part before first ' - ' trimmed"""
+    return title.split(" - ")[0].strip()
+
+def build_duplicate_map(api_key: str) -> dict[str, list[str]]:
     """
-    Return URL of *another* open Game-Launch whose BASE title is ≥80 % similar.
-    None ⇒ no duplicate.
+    Return {clean_base_title: [issue_url,…]} for every OPEN Game-Launch ticket.
     """
-    base = full_title.split(" - ")[0].strip()
-    query = """
-query ($needle:String!, $self:String!){
+    q = """
+query ($after:String){
   issues(
     filter:{
-      title:{ contains:$needle },
-      labels:{ name:{ eq:"Game Launch" } },
-      state:{ type:{ neq:COMPLETED } },
-      id:{ neq:$self }
+      labels:{name:{eq:"Game Launch"}},
+      state:{type:{neq:COMPLETED}}
     },
-    first:25
-  ){ nodes{ id title url } }
+    first:250,
+    after:$after
+  ){
+    nodes{ id title url }
+    pageInfo{ hasNextPage endCursor }
+  }
 }"""
-    try:
-        r = requests.post(
-            LINEAR_URL,
-            json={"query": query, "variables": {"needle": base, "self": self_id}},
-            headers={"Authorization": api_key, "Content-Type": "application/json"},
-            timeout=15,
-        ).json()
+    hdr = {"Authorization": api_key, "Content-Type": "application/json"}
+    after = None; dupe_map: dict[str, list[str]] = {}
+    while True:
+        r = requests.post(LINEAR_URL, json={"query": q, "variables": {"after": after}},
+                          headers=hdr, timeout=30).json()
         nodes = r.get("data", {}).get("issues", {}).get("nodes", [])
-        cb = _clean(base)
         for n in nodes:
-            if difflib.SequenceMatcher(None, cb, _clean(n["title"].split(" - ")[0].strip())).ratio() >= 0.80:
-                return n["url"]
-        return None
-    except requests.exceptions.RequestException:
-        return None
+            key = _clean(base_of(n["title"]))
+            dupe_map.setdefault(key, []).append(n["url"])
+        pg = r["data"]["issues"]["pageInfo"]
+        if not pg["hasNextPage"]: break
+        after = pg["endCursor"]
+    return dupe_map
 
 # ───────────────────────────────
-# Helpers  — providers & user-keys
+#  PROVIDER & USER-KEY HELPERS
 # ───────────────────────────────
 def safe_nodes(resp: dict) -> list[dict]:
     if "errors" in resp and resp["errors"]:
@@ -108,15 +112,12 @@ def get_provider_credentials():
     if not rows:
         return {}
     hdr = [h.strip().lower() for h in rows[0]]
-    i_name = hdr.index("provider name")
-    i_url  = hdr.index("url")
-    i_user = hdr.index("username")
-    i_pass = hdr.index("password")
+    i_name = hdr.index("provider name"); i_url = hdr.index("url")
+    i_user = hdr.index("username");     i_pass = hdr.index("password")
     i_al   = hdr.index("aliases") if "aliases" in hdr else None
     out = {}
     for r in rows[1:]:
-        if len(r) <= i_name or not r[i_name].strip():
-            continue
+        if len(r) <= i_name or not r[i_name].strip(): continue
         key = r[i_name].strip().lower()
         aliases = []
         if i_al is not None and len(r) > i_al and r[i_al].strip():
@@ -130,17 +131,16 @@ def get_provider_credentials():
     return out
 
 # ───────────────────────────────
-# Sidebar
+#  SIDEBAR
 # ───────────────────────────────
 st.sidebar.title("Navigation")
 view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
 
 # ───────────────────────────────
-# ACCOUNT TAB
+#  ACCOUNT TAB
 # ───────────────────────────────
 if view == "Account":
     st.header("Account / credentials")
-
     users = load_user_keys()
     existing = list(users.keys())
     choice = st.selectbox("Designer", existing + ["<new designer>"])
@@ -170,7 +170,7 @@ linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
 # ───────────────────────────────
-# FETCH GAMES – duplicate flag via contains-search
+#  FETCH GAMES – one-fetch duplicate flag
 # ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
@@ -178,7 +178,9 @@ if view == "Fetch Games":
     date_str = date_val.strftime("%Y-%m-%d")
 
     if st.button("Fetch"):
-        with st.spinner("Loading day’s list…"):
+        with st.spinner("Downloading open Game-Launch list …"):
+            dup_map = build_duplicate_map(linear_key)
+
             day_q = {"query": f"""query {{
   issues(filter:{{
     dueDate:{{eq:"{date_str}"}},
@@ -202,9 +204,10 @@ if view == "Fetch Games":
             st.info("No launches for that date.")
 
         for n in day_nodes:
-            dup_url = duplicate_contains(linear_key, n["title"], n["id"])
-            badge   = f" **🚩 duplicate** ([existing]({dup_url}))" if dup_url else ""
-            my_url  = f"https://linear.app/issue/{n['id']}"
+            key      = _clean(base_of(n["title"]))
+            dup_urls = [u for u in dup_map.get(key, []) if not u.endswith(n["id"])]
+            badge    = f" **🚩 duplicate** ([existing]({dup_urls[0]}))" if dup_urls else ""
+            my_url   = f"https://linear.app/issue/{n['id']}"
 
             st.subheader(n["title"] + badge)
             st.markdown(f"[🔗 Open in Linear]({my_url})")
@@ -229,7 +232,7 @@ if view == "Fetch Games":
     st.stop()
 
 # ───────────────────────────────
-# THUMBNAILS TAB (portrait-only)
+#  THUMBNAILS TAB (portrait-only)
 # ───────────────────────────────
 if view == "Thumbnails":
     st.header("🖼️ Create & download bundle")
