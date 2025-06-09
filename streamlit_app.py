@@ -27,6 +27,35 @@ PROV_RANGE    = "Sheet1!A:Z"
 USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
 
 # ───────────────────────────────
+# Duplicate
+# ───────────────────────────────
+
+def is_duplicate(api_key: str, title: str, self_id: str) -> bool:
+    """
+    Return True if another open Game-Launch issue exists with the same base title.
+    """
+    base = title.split(" - ")[0].strip()
+    query = """
+query($name:String!,$self:String!){
+  issues(filter:{
+    title:{eq:$name},
+    labels:{name:{eq:"Game Launch"}},
+    state:{type:{neq:COMPLETED}},
+    id:{neq:$self}
+  }, first:1){ nodes{ id } }
+}
+"""
+    vars = {"name": base, "self": self_id}
+    resp = requests.post(
+        LINEAR_URL,
+        json={"query": query, "variables": vars},
+        headers={"Authorization": api_key, "Content-Type": "application/json"},
+        timeout=30,
+    ).json()
+    return bool(resp.get("data", {}).get("issues", {}).get("nodes"))
+
+
+# ───────────────────────────────
 # Helpers  ─ providers & user-keys
 # ───────────────────────────────
 def safe_nodes(resp: dict) -> list[dict]:
@@ -170,7 +199,7 @@ linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
 # ───────────────────────────────
-# FETCH GAMES TAB
+# FETCH GAMES  — per-title duplicate check
 # ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
@@ -178,54 +207,38 @@ if view == "Fetch Games":
     date_str = date_val.strftime("%Y-%m-%d")
 
     if st.button("Fetch"):
-        with st.spinner("Querying Linear…"):
-            try:
-                # Day-specific issues
-                day_q = {"query": f"""query {{
+        with st.spinner("Loading today’s list…"):
+            day_q = {"query": f"""query {{
   issues(filter:{{
     dueDate:{{eq:"{date_str}"}},
     labels:{{name:{{eq:"Game Launch"}}}},
     state:{{name:{{eq:"{linear_state}"}}}}
   }}, first:250){{nodes{{id title}}}}
 }}"""}  # noqa
-                day_nodes = safe_nodes(
-                    requests.post(
-                        LINEAR_URL,
-                        json=day_q,
-                        headers={"Authorization": linear_key,
-                                 "Content-Type": "application/json"},
-                        timeout=30,
-                    ).json()
-                )
-                st.session_state["issue_map"] = {n["title"]: n["id"] for n in day_nodes}
-
-                # All open Game-Launch issues (paginated)
-                all_nodes = fetch_all_open_game_launches(linear_key)
-
-            except requests.exceptions.RequestException as e:
-                st.error(f"Linear request failed: {e}")
-                st.stop()
-
-        # Duplicate detection
-        counts = {}
-        for n in all_nodes:
-            g = n["title"].split(" - ")[0].strip().lower()
-            counts[g] = counts.get(g, 0) + 1
-        duplicates = {n for n, c in counts.items() if c > 1}
-        if duplicates:
-            st.warning("⚠️ Duplicate games: " + ", ".join(sorted(duplicates)))
+            day_nodes = safe_nodes(
+                requests.post(
+                    LINEAR_URL,
+                    json=day_q,
+                    headers={"Authorization": linear_key,
+                             "Content-Type": "application/json"},
+                    timeout=30,
+                ).json()
+            )
+            st.session_state["issue_map"] = {n["title"]: n["id"] for n in day_nodes}
 
         provs = get_provider_credentials()
         if not day_nodes:
             st.info("No launches for that date.")
 
         for n in day_nodes:
-            base = n["title"].split(" - ")[0].strip().lower()
-            badge = " **🚩 duplicate**" if base in duplicates else ""
-            issue_url = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
+            base = n["title"].split(" - ")[0].strip()
+            dup  = is_duplicate(linear_key, n["title"], n["id"])
+            badge = " **🚩 duplicate**" if dup else ""
+            url   = f"https://linear.app/issue/{n['id']}"
             st.subheader(n["title"] + badge)
-            st.markdown(f"[🔗 Open in Linear]({issue_url})")
+            st.markdown(f"[🔗 Open in Linear]({url})")
 
+            # provider display (unchanged)
             prov_parts = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
             for k in prov_parts[::-1]:
