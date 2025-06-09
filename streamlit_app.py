@@ -235,18 +235,22 @@ if view == "Fetch Games":
             st.info("No launches for that date.")
 
         for n in day_nodes:
-            base = n["title"].split(" - ")[0].strip()
-            dup_url = duplicate_via_search(linear_key, base, n["id"])
+            base     = n["title"].split(" - ")[0].strip()
+            dup_url  = duplicate_via_search(linear_key, base, n["id"])
         
             badge = ""
             if dup_url:
                 badge = f" **🚩 duplicate**  ([view duplicate]({dup_url}))"
         
+            # build the link from the ID (no KeyError)
+            my_url = f"https://linear.app/issue/{n['id']}"
+        
             st.subheader(n["title"] + badge)
-            st.markdown(f"[🔗 Open in Linear]({n['url']})")
-
-            # provider display (unchanged)
-            prov_parts = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
+            st.markdown(f"[🔗 Open in Linear]({my_url})")
+        
+            # ---------- provider info (unchanged) ----------
+            prov_parts = [p.strip().lower()
+                          for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
             for k in prov_parts[::-1]:
                 for main, info in provs.items():
@@ -257,10 +261,12 @@ if view == "Fetch Games":
                             st.markdown(f"[Provider link]({info['url']})")
                         if info["username"] or info["password"]:
                             st.code(f"User: {info['username']}\nPass: {info['password']}")
-                        shown.add(main); break
+                        shown.add(main)
+                        break
             if not shown:
                 st.warning("No provider info: " + ", ".join(prov_parts))
             st.divider()
+
     st.stop()
 
 # ───────────────────────────────
