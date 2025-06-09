@@ -180,3 +180,115 @@ linear_state = st.session_state["linear_state"]
 ACTIVE_COLUMNS = [linear_state.lower(), "games", "games done"]  # tweak names if needed
 
 # ───────────────────────────────
+#  FETCH GAMES TAB
+# ───────────────────────────────
+if view == "Fetch Games":
+    st.header("📋 Fetch game launches")
+    dt = st.date_input("Date", datetime.today())
+
+    if st.button("Fetch"):
+        # 1) Build duplicate map (across active columns)
+        with st.spinner("Scanning workspace for duplicates …"):
+            dup_map = build_duplicate_map(linear_key, ACTIVE_COLUMNS)
+
+        # 2) Pull issues for the chosen day (any column)
+        q = {
+            "query": f"""query {{
+  issues(filter:{{
+    dueDate:{{eq:\"{dt:%Y-%m-%d}\"}},
+    labels:{{name:{{eq:\"Game Launch\"}}}}
+  }}, first:250){{nodes{{id title}}}}}}"""
+        }
+        resp = requests.post(
+            LINEAR_URL,
+            json=q,
+            headers={"Authorization": linear_key, "Content-Type": "application/json"},
+            timeout=30,
+        )
+        day_nodes = safe_nodes(resp.json())
+        st.session_state["issue_map"] = {n["title"]: n["id"] for n in day_nodes}
+
+        provs = get_provider_credentials()
+        if not day_nodes:
+            st.info("No launches for that date.")
+
+        for n in day_nodes:
+            base_key = _clean(base_of(n["title"]))
+            dup_urls = [u for u in dup_map.get(base_key, []) if not u.endswith(n["id"])]
+            badge = f" **🚩 duplicate** ([other]({dup_urls[0]}))" if dup_urls else ""
+            st.subheader(n["title"] + badge)
+            st.markdown(f"[Open in Linear](https://linear.app/issue/{n['id']})")
+
+            # provider info
+            tags = [t.strip().lower() for t in n["title"].split(" - ")[-1].split("/")]
+            shown = set()
+            for tag in tags:
+                for prov, info in provs.items():
+                    if tag == prov or tag in info["aliases"]:
+                        if prov in shown:
+                            continue
+                        if info["url"]:
+                            st.markdown(f"[Provider link]({info['url']})")
+                        if info["username"] or info["password"]:
+                            st.code(f"User: {info['username']}
+Pass: {info['password']}")
+                        shown.add(prov)
+                        break
+            if not shown:
+                st.warning("No provider info found.")
+            st.divider()
+    st.stop()
+
+# ───────────────────────────────
+#  THUMBNAILS TAB  (portrait‑only)
+# ───────────────────────────────
+if view == "Thumbnails":
+    st.header("🖼️ Create & download bundle")
+    if "issue_map" not in st.session_state or not st.session_state["issue_map"]:
+        st.error("Fetch games first so I know the issue list.")
+        st.stop()
+
+    title = st.selectbox("Issue", list(st.session_state["issue_map"].keys()))
+    issue_id = st.session_state["issue_map"][title]
+    st.markdown(f"[Open in Linear](https://linear.app/issue/{issue_id})")
+
+    game_name = st.text_input("Game name", placeholder=title)
+    uploads   = st.file_uploader("portrait.jpg & box.jpg", type=["jpg","jpeg","png"], accept_multiple_files=True)
+
+    if st.button("Process"):
+        spec = {"box": (".jpg", False), "portrait": (".jpg", True)}
+        bucket = {k: f for f in uploads or [] for k in spec if k in f.name.lower()}
+        if len(bucket) != 2:
+            st.error("Please upload BOTH portrait.jpg and box.jpg")
+            st.stop()
+
+        folders = {"Box": {}, "Portrait": {}}
+        for role, upl in bucket.items():
+            ext, compress = spec[role]
+            data = upl.read()
+            if compress:
+                data = tinify.from_buffer(data).to_buffer()
+            folders[role.capitalize()][f"{game_name}{ext}"] = data
+            if role == "portrait":
+                buf = io.BytesIO()
+                Image.open(io.BytesIO(data)).save(buf, format="WEBP")
+                folders["Portrait"][f"{game_name}.webp"] = buf.getvalue()
+
+        # portrait.zip
+        pzip = io.BytesIO()
+        with zipfile.ZipFile(pzip, "w", zipfile.ZIP_DEFLATED) as z:
+            for fn, bl in folders["Portrait"].items():
+                z.writestr(fn, bl)
+        pzip.seek(0)
+
+        # master bundle
+        bundle = io.BytesIO()
+        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as z:
+            for fold, files in folders.items():
+                for fn, bl in files.items():
+                    z.writestr(f"{fold}/{fn}", bl)
+            z.writestr("portrait.zip", pzip.read())
+        bundle.seek(0)
+
+        st.download_button("⬇️ Download bundle", bundle, file_name=f"{game_name or 'game'}_bundle.zip", mime="application/zip")
+        st.success("✅ Bundle ready!")
