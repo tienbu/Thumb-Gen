@@ -1,14 +1,11 @@
+streamlit==1.30.0             # stable on Cloud
+streamlit-js-eval==0.1.4      # one line, dash style
 tinify
-streamlit-js-eval==0.1.4
-google-auth
-google-auth-httplib2
 httpx
-streamlit
 requests
 requests-toolbelt
 pillow
 google-api-python-client
 google-auth
+google-auth-httplib2
 google-auth-oauthlib
-tinify
-streamlit_js_eval==0.1.3
