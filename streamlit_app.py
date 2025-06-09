@@ -136,51 +136,64 @@ if "linear_key" not in st.session_state or "linear_state" not in st.session_stat
 linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
-# ───────────────────────────────
-# FETCH GAMES TAB  (global duplicate check)
-# ───────────────────────────────
+# ────────────────────────────────────────────────────────────────
+# FETCH GAMES  — duplicate check across ALL open Game Launches
+# ────────────────────────────────────────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
     date_val = st.date_input("Pick a date", datetime.today())
     date_str = date_val.strftime("%Y-%m-%d")
 
     if st.button("Fetch"):
-        # --- issues for selected day ---
-        day_query = {
-            "query": f"""query {{
+        with st.spinner("Querying Linear…"):
+            try:
+                # --- issues for selected day ---
+                day_q = {"query": f"""query {{
   issues(filter:{{
     dueDate:{{eq:"{date_str}"}},
     labels:{{name:{{eq:"Game Launch"}}}},
     state:{{name:{{eq:"{linear_state}"}}}}
   }}, first:250){{nodes{{id title}}}}
-}}"""}
-        day_nodes = safe_nodes(requests.post(
-            LINEAR_URL, headers={"Authorization": linear_key,
+}}"""}  # noqa
+                day_nodes = safe_nodes(
+                    requests.post(
+                        LINEAR_URL,
+                        headers={"Authorization": linear_key,
                                  "Content-Type": "application/json"},
-            json=day_query).json())
-        st.session_state["issue_map"] = {n["title"]: n["id"] for n in day_nodes}
+                        json=day_q,
+                        timeout=20,             # ← timeout
+                    ).json()
+                )
+                st.session_state["issue_map"] = {n["title"]: n["id"] for n in day_nodes}
 
-        # --- ALL open Game Launch issues (any column / date) ---
-        all_query = {
-            "query": """query {
+                # --- ALL open Game Launch issues ---
+                all_q = {"query": """query {
   issues(filter:{
     labels:{name:{eq:"Game Launch"}},
     state:{type:{neq:COMPLETED}}
   }, first:500){ nodes{ id title } }
 }"""}
-        all_nodes = safe_nodes(requests.post(
-            LINEAR_URL, headers={"Authorization": linear_key,
+                all_nodes = safe_nodes(
+                    requests.post(
+                        LINEAR_URL,
+                        headers={"Authorization": linear_key,
                                  "Content-Type": "application/json"},
-            json=all_query).json())
+                        json=all_q,
+                        timeout=20,             # ← timeout
+                    ).json()
+                )
+            except requests.exceptions.RequestException as e:
+                st.error(f"Linear request failed: {e}")
+                st.stop()
 
-        # duplicate detection
+        # ----- duplicate detection & UI (unchanged) -----
         name_count = {}
         for n in all_nodes:
             g = n["title"].split(" - ")[0].strip().lower()
             name_count[g] = name_count.get(g, 0) + 1
-        duplicates = {n for n, c in name_count.items() if c > 1}
-        if duplicates:
-            st.warning("⚠️ Duplicate games: " + ", ".join(sorted(duplicates)))
+        dup = {n for n, c in name_count.items() if c > 1}
+        if dup:
+            st.warning("⚠️ Duplicate games: " + ", ".join(sorted(dup)))
 
         provs = get_provider_credentials()
         if not day_nodes:
@@ -188,24 +201,24 @@ if view == "Fetch Games":
 
         for n in day_nodes:
             base = n["title"].split(" - ")[0].strip().lower()
-            dup_badge = " **🚩 duplicate**" if base in duplicates else ""
-            issue_url = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
-            st.subheader(n["title"] + dup_badge)
-            st.markdown(f"[🔗 Open in Linear]({issue_url})")
+            badge = " **🚩 duplicate**" if base in dup else ""
+            url   = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
+            st.subheader(n["title"] + badge)
+            st.markdown(f"[🔗 Open in Linear]({url})")
 
+            # provider display (unchanged) …
             prov_parts = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
-            for key in prov_parts[::-1]:
+            for k in prov_parts[::-1]:
                 for main, info in provs.items():
-                    if key == main or key in info["aliases"]:
+                    if k == main or k in info["aliases"]:
                         if main in shown:
                             continue
                         if info["url"]:
                             st.markdown(f"[Provider link]({info['url']})")
                         if info["username"] or info["password"]:
                             st.code(f"User: {info['username']}\nPass: {info['password']}")
-                        shown.add(main)
-                        break
+                        shown.add(main); break
             if not shown:
                 st.warning("No provider info: " + ", ".join(prov_parts))
             st.divider()
