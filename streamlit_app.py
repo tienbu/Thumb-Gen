@@ -15,50 +15,58 @@ SERVICE_B64 = st.secrets["GC_SERVICE_KEY_B64"]
 LINEAR_URL  = "https://api.linear.app/graphql"
 tinify.key  = TINIFY_KEY
 
-# ───────────────────────────────
-# tiny helper → remember text inputs in browser localStorage
-# ───────────────────────────────
+# ── localStorage helper (safe even if component missing) ─────────
 try:
     from streamlit_js_eval import streamlit_js_eval
 except ModuleNotFoundError:
-    streamlit_js_eval = None                      # graceful fallback
+    streamlit_js_eval = None
 
 
-def remember(field: str, label: str, *, pwd=False) -> str:
-    """Text input that persists value in browser localStorage."""
-    # 1) pull from localStorage on first run
+def remember(field: str, label: str, *, pwd: bool = False) -> str:
+    """
+    Text-input that stores its value in browser localStorage.
+    Works even if the component isn’t installed yet.
+    """
+    # 1️⃣ pull from localStorage → session_state
     if streamlit_js_eval and field not in st.session_state:
         stored = streamlit_js_eval(
-            f"localStorage.getItem('{field}')", key=f"get_{field}"
+            f"localStorage.getItem('{field}')",
+            key=f"get_{field}",
+            label=f"get_{field}",          # <- added
         )
         if stored:
             st.session_state[field] = stored
 
-    # 2) show the input, pre-filled if we have it
+    # 2️⃣ show the input
     value = st.text_input(
         label,
         value=st.session_state.get(field, ""),
         type="password" if pwd else "default",
     )
 
-    # 3) save if changed
+    # 3️⃣ save if changed
     if value and value != st.session_state.get(field, ""):
         st.session_state[field] = value
         if streamlit_js_eval:
             streamlit_js_eval(
-                f"localStorage.setItem('{field}', `{value}`)", key=f"set_{field}"
+                f"localStorage.setItem('{field}', `{value}`)",
+                key=f"set_{field}",
+                label=f"set_{field}",      # <- added
             )
 
-    # clear button
+    # optional clear
     if streamlit_js_eval and st.session_state.get(field):
         if st.button("Clear saved key", key=f"clr_{field}"):
             streamlit_js_eval(
-                f"localStorage.removeItem('{field}')", key=f"rm_{field}"
+                f"localStorage.removeItem('{field}')",
+                key=f"rm_{field}",
+                label=f"rm_{field}",       # <- added
             )
             st.session_state.pop(field, None)
             value = ""
 
     return value
+
 
 # ───────────────────────────────
 # Google-Sheets helper
