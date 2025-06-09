@@ -38,11 +38,15 @@ def base_of(title: str) -> str:
     """part before first ' - ' trimmed"""
     return title.split(" - ")[0].strip()
 
+# ───────────────────────────────
+#  Duplicate-map  (safe, one request per page)
+# ───────────────────────────────
 def build_duplicate_map(api_key: str) -> dict[str, list[str]]:
     """
-    Return {clean_base_title: [issue_url,…]} for every OPEN Game-Launch ticket.
+    { clean_base_title : [issue_url, …] } for every OPEN Game-Launch ticket.
+    Never raises – returns {} if Linear responds with an error.
     """
-    q = """
+    query = """
 query ($after:String){
   issues(
     filter:{
@@ -56,19 +60,38 @@ query ($after:String){
     pageInfo{ hasNextPage endCursor }
   }
 }"""
-    hdr = {"Authorization": api_key, "Content-Type": "application/json"}
-    after = None; dupe_map: dict[str, list[str]] = {}
+    hdr  = {"Authorization": api_key, "Content-Type": "application/json"}
+    dup  : dict[str, list[str]] = {}
+    after = None
+
     while True:
-        r = requests.post(LINEAR_URL, json={"query": q, "variables": {"after": after}},
-                          headers=hdr, timeout=30).json()
-        nodes = r.get("data", {}).get("issues", {}).get("nodes", [])
-        for n in nodes:
+        try:
+            resp = requests.post(
+                LINEAR_URL,
+                json={"query": query, "variables": {"after": after}},
+                headers=hdr,
+                timeout=30,
+            ).json()
+        except requests.exceptions.RequestException as e:
+            st.warning(f"Linear request failed: {e}")
+            return dup
+
+        if resp.get("errors"):
+            st.warning("Linear error while building duplicate map:\n"
+                       + json.dumps(resp["errors"], indent=2))
+            return dup
+
+        data = resp.get("data", {}).get("issues", {})
+        for n in data.get("nodes", []):
             key = _clean(base_of(n["title"]))
-            dupe_map.setdefault(key, []).append(n["url"])
-        pg = r["data"]["issues"]["pageInfo"]
-        if not pg["hasNextPage"]: break
-        after = pg["endCursor"]
-    return dupe_map
+            dup.setdefault(key, []).append(n["url"])
+
+        page = data.get("pageInfo", {})
+        if not page.get("hasNextPage"):
+            break
+        after = page.get("endCursor")
+
+    return dup
 
 # ───────────────────────────────
 #  PROVIDER & USER-KEY HELPERS
