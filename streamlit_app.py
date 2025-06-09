@@ -150,43 +150,78 @@ if "linear_key" not in st.session_state or "linear_state" not in st.session_stat
 linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
-# ───────────────────────────────
-# FETCH GAMES TAB
-# ───────────────────────────────
+# ────────────────────────────────────────────────────────────────
+# FETCH GAMES  — duplicate check across ALL open Game Launches
+# ────────────────────────────────────────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
     date_val = st.date_input("Pick a date", datetime.today())
     date_str = date_val.strftime("%Y-%m-%d")
 
     if st.button("Fetch"):
-        q = {"query": f"""query {{
+        ##############################
+        # 1. issues for the selected day
+        ##############################
+        day_query = {
+            "query": f"""query {{
   issues(filter:{{
     dueDate:{{eq:"{date_str}"}},
     labels:{{name:{{eq:"Game Launch"}}}},
     state:{{name:{{eq:"{linear_state}"}}}}
-  }}){{nodes{{id title}}}}
-}}"""}  # noqa
-        r = requests.post(
+  }}, first:250){{nodes{{id title}}}}
+}}"""}                                                     # noqa
+        day_resp = requests.post(
             LINEAR_URL,
             headers={"Authorization": linear_key, "Content-Type": "application/json"},
-            json=q,
-        )
-        r.raise_for_status()
-        nodes = r.json()["data"]["issues"]["nodes"]
-        st.session_state["issue_map"] = {n["title"]: n["id"] for n in nodes}
+            json=day_query,
+        ).json()
+        day_nodes = day_resp["data"]["issues"]["nodes"]
+        st.session_state["issue_map"] = {n["title"]: n["id"] for n in day_nodes}
 
+        ##############################
+        # 2. every open Game Launch issue (across dates / columns)
+        ##############################
+        all_query = {
+            "query": """query {
+  issues(filter:{
+    labels:{name:{eq:"Game Launch"}},
+    state:{type:{neq:COMPLETED}}      # anything not Done/Canceled
+  }, first:500){
+    nodes{ id title }
+  }}
+"""}
+        all_resp = requests.post(
+            LINEAR_URL,
+            headers={"Authorization": linear_key, "Content-Type": "application/json"},
+            json=all_query,
+        ).json()
+        all_nodes = all_resp["data"]["issues"]["nodes"]
+
+        # ----- duplicate detection across ALL open issues -----
+        name_count = {}
+        for n in all_nodes:
+            gname = n["title"].split(" - ")[0].strip().lower()
+            name_count[gname] = name_count.get(gname, 0) + 1
+        dup_names = {n for n, c in name_count.items() if c > 1}
+        if dup_names:
+            st.warning("⚠️ Duplicate games exist: " + ", ".join(sorted(dup_names)))
+
+        # ---------- show the day list (with 🚩 badge) ----------
         provs = get_provider_credentials()
-        if not nodes:
-            st.info("No launches.")
+        if not day_nodes:
+            st.info("No launches for that date.")
 
-        for n in nodes:
+        for n in day_nodes:
             issue_url = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
-            st.subheader(n["title"])
+            base_name = n["title"].split(" - ")[0].strip().lower()
+            dup_badge = " **🚩 duplicate**" if base_name in dup_names else ""
+            st.subheader(n["title"] + dup_badge)
             st.markdown(f"[🔗 Open in Linear]({issue_url})")
 
+            # ----- provider info (unchanged) -----
             prov_parts = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
-            for key in prov_parts[::-1]:  # most-specific first
+            for key in prov_parts[::-1]:
                 for main, info in provs.items():
                     if key == main or key in info["aliases"]:
                         if main in shown:
