@@ -236,12 +236,10 @@ if view == "Fetch Games":
             st.info("No launches for that date.")
 
         for n in day_nodes:
-            base     = n["title"].split(" - ")[0].strip()
-            dup_url  = duplicate_via_search(linear_key, base, n["id"])
+            base_title = n["title"]                         # full title
+            dup_url    = duplicate_exact(linear_key, base_title, n["id"])
         
-            badge = ""
-            if dup_url:
-                badge = f" **🚩 duplicate**  ([view duplicate]({dup_url}))"
+            badge = f" **🚩 duplicate**  ([existing]({dup_url}))" if dup_url else ""
         
             # build the link from the ID (no KeyError)
             my_url = f"https://linear.app/issue/{n['id']}"
