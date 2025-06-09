@@ -150,59 +150,73 @@ if view == "Fetch Games":
     st.stop()
 
 # ───────────────────────────────
-# Thumbnails view
+# Thumbnails view  (Portrait-only)
 # ───────────────────────────────
 if view == "Thumbnails":
     st.markdown("## 🖼️ Create & Download Thumbnail Bundles")
-    if "issue_map" not in st.session_state:
+
+    if "issue_map" not in st.session_state or not st.session_state["issue_map"]:
         st.error("Fetch games first.")
         st.stop()
 
     issue_title = st.selectbox("Issue", list(st.session_state["issue_map"].keys()))
     issue_id    = st.session_state["issue_map"][issue_title]
+    st.markdown(f"[🔗 Open in Linear](https://linear.app/issue/{issue_id})")
+
     game_name = st.text_input("Game name", placeholder=issue_title)
-    uploads   = st.file_uploader("Upload portrait, landscape, box", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
-    st.markdown(f"[🔗 Open in Linear](https://linear.app/your-workspace/issue/{issue_id})")
+    uploads   = st.file_uploader("Upload **portrait** & **box**",
+                                 type=["jpg", "jpeg", "png"],
+                                 accept_multiple_files=True)
 
     if st.button("Process"):
-        spec = {"box": (".jpg", False), "portrait": (".jpg", True), "landscape": (".png", True)}
+        # we now expect ONLY box + portrait
+        spec = {
+            "box":      (".jpg", False),   # no compression
+            "portrait": (".jpg", True)     # TinyPNG
+        }
+
         bucket = {k: f for f in uploads or [] for k in spec if k in f.name.lower()}
-        if len(bucket) != 3:
-            st.error("Upload portrait, landscape, and box.")
+        if len(bucket) != 2:
+            st.error("Upload BOTH files: portrait.jpg and box.jpg")
             st.stop()
 
-        folders = {"Box": {}, "Portrait": {}, "Landscape": {}}
-        for k, f in bucket.items():
-            ext, comp = spec[k]
-            data = f.read()
-            if comp:
-                data = tinify.from_buffer(data).to_buffer()
-            fold = k.capitalize()
-            folders[fold][f"{game_name}{ext}"] = data
-            if k != "box":
+        folders = {"Box": {}, "Portrait": {}}
+
+        for role, upl in bucket.items():
+            ext, compress = spec[role]
+            data = upl.read()
+            if compress:
+                data = tinify.from_buffer(data).to_buffer()   # TinyPNG
+            folders[role.capitalize()][f"{game_name}{ext}"] = data
+
+            # create WebP for portrait
+            if role == "portrait":
                 buf = io.BytesIO()
                 Image.open(io.BytesIO(data)).save(buf, format="WEBP")
-                folders[fold][f"{game_name}.webp"] = buf.getvalue()
+                folders["Portrait"][f"{game_name}.webp"] = buf.getvalue()
 
-        # Build zips and one mega zip
-        zips = {}
-        for fold in ("Portrait", "Landscape"):
-            buf_zip = io.BytesIO()
-            with zipfile.ZipFile(buf_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-                for fname, blob in folders[fold].items():
-                    zf.writestr(fname, blob)
-            buf_zip.seek(0)
-            zips[fold] = buf_zip.read()
+        # ---- portrait.zip ----
+        p_zip_buf = io.BytesIO()
+        with zipfile.ZipFile(p_zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fname, blob in folders["Portrait"].items():
+                zf.writestr(fname, blob)
+        p_zip_buf.seek(0)
 
-        mega_buf = io.BytesIO()
-        with zipfile.ZipFile(mega_buf, "w", zipfile.ZIP_DEFLATED) as mega:
-            for fold in folders:
-                for fname, blob in folders[fold].items():
-                    mega.writestr(f"{fold}/{fname}", blob)
-            for fold in ("Portrait", "Landscape"):
-                mega.writestr(f"{fold}.zip", zips[fold])
-        mega_buf.seek(0)
+        # ---- master bundle ----
+        bundle = io.BytesIO()
+        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as zf:
+            # raw folders
+            for fold, files in folders.items():
+                for fname, blob in files.items():
+                    zf.writestr(f"{fold}/{fname}", blob)
+            # the portrait.zip itself
+            zf.writestr("portrait.zip", p_zip_buf.read())
+        bundle.seek(0)
 
-        st.download_button("⬇️ Download Everything (zip)", mega_buf, file_name=f"{game_name}_bundle.zip", mime="application/zip")
-        st.success("✅ Bundle ready! Download your assets.")
-
+        st.download_button(
+            "⬇️ Download bundle (zip)",
+            bundle,
+            file_name=f"{game_name or 'game'}_bundle.zip",
+            mime="application/zip",
+        )
+        st.success("✅ Bundle ready – only Box & Portrait now.")
