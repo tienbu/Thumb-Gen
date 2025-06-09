@@ -43,7 +43,6 @@ query ($after:String){
   issues(
     filter:{
       labels:{name:{eq:"Game Launch"}},
-      state:{type:{neq:COMPLETED}}
     },
     first:250,
     after:$after
