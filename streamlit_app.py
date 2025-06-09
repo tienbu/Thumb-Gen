@@ -57,15 +57,15 @@ query ($after:String){
   }
 }"""
 
-    hdr   = {"Authorization": api_key, "Content-Type": "application/json"}
-    dup   : dict[str, list[str]] = {}
-    after = None
+    headers = {"Authorization": api_key, "Content-Type": "application/json"}
+    after   = None
+    dup: dict[str, list[str]] = {}
 
     while True:
         try:
             resp = requests.post(LINEAR_URL,
                                  json={"query": query, "variables": {"after": after}},
-                                 headers=hdr, timeout=30)
+                                 headers=headers, timeout=30)
             if resp is None:
                 break
             resp = resp.json()
@@ -77,18 +77,19 @@ query ($after:String){
             return dup
 
         data = resp.get("data", {}).get("issues", {})
-        for n in data.get("nodes", []):
-            state_name = n.get("state", {}).get("name", "").lower()
+        for node in data.get("nodes", []):
+            state_name = node.get("state", {}).get("name", "").lower()
             if any(kw in state_name for kw in CLOSED_KEYWORDS):
                 continue
             if state_name not in allow:
                 continue
-            dup.setdefault(_clean(base_of(n["title"])), []).append(n["url"])
+            dup.setdefault(_clean(base_of(node["title"])), []).append(node["url"])
 
         page = data.get("pageInfo", {})
         if not page.get("hasNextPage"):
             break
         after = page.get("endCursor")
+
     return dup
 
 # ───────────────────────────────
@@ -180,9 +181,11 @@ if "linear_key" not in st.session_state or "linear_state" not in st.session_stat
 linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
+ACTIVE_COLUMNS = [linear_state.lower(), "games", "games done"]  # tweak names if needed
+
 # ───────────────────────────────
 #  FETCH GAMES TAB
 # ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
-    dt = st.date
+    dt
