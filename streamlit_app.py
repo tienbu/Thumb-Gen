@@ -30,30 +30,34 @@ USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
 # Duplicate
 # ───────────────────────────────
 
-def is_duplicate(api_key: str, title: str, self_id: str) -> bool:
+def duplicate_via_search(api_key: str, base_title: str, self_id: str) -> str | None:
     """
-    Return True if another open Game-Launch issue exists with the same base title.
+    Return the Linear URL of a duplicate Game-Launch issue, or None.
     """
-    base = title.split(" - ")[0].strip()
     query = """
-query($name:String!,$self:String!){
-  issues(filter:{
-    title:{eq:$name},
-    labels:{name:{eq:"Game Launch"}},
-    state:{type:{neq:COMPLETED}},
-    id:{neq:$self}
-  }, first:1){ nodes{ id } }
-}
-"""
-    vars = {"name": base, "self": self_id}
-    resp = requests.post(
-        LINEAR_URL,
-        json={"query": query, "variables": vars},
-        headers={"Authorization": api_key, "Content-Type": "application/json"},
-        timeout=30,
-    ).json()
-    return bool(resp.get("data", {}).get("issues", {}).get("nodes"))
-
+query ($term:String!, $self:String!){
+  issueSearch(
+    term:$term,
+    first:5,
+    filter:{
+      labels:{name:{eq:"Game Launch"}},
+      state:{type:{neq:COMPLETED}},
+      id:{neq:$self}
+    }
+  ){ nodes{ id url title } }
+}"""
+    vars = {"term": base_title, "self": self_id}
+    try:
+        resp = requests.post(
+            LINEAR_URL,
+            json={"query": query, "variables": vars},
+            headers={"Authorization": api_key, "Content-Type": "application/json"},
+            timeout=10,
+        ).json()
+        dup_nodes = resp.get("data", {}).get("issueSearch", {}).get("nodes", [])
+        return dup_nodes[0]["url"] if dup_nodes else None
+    except requests.exceptions.RequestException:
+        return None          # network issue → treat as no duplicate
 
 # ───────────────────────────────
 # Helpers  ─ providers & user-keys
@@ -232,11 +236,14 @@ if view == "Fetch Games":
 
         for n in day_nodes:
             base = n["title"].split(" - ")[0].strip()
-            dup  = is_duplicate(linear_key, n["title"], n["id"])
-            badge = " **🚩 duplicate**" if dup else ""
-            url   = f"https://linear.app/issue/{n['id']}"
+            dup_url = duplicate_via_search(linear_key, base, n["id"])
+        
+            badge = ""
+            if dup_url:
+                badge = f" **🚩 duplicate**  ([view duplicate]({dup_url}))"
+        
             st.subheader(n["title"] + badge)
-            st.markdown(f"[🔗 Open in Linear]({url})")
+            st.markdown(f"[🔗 Open in Linear]({n['url']})")
 
             # provider display (unchanged)
             prov_parts = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
