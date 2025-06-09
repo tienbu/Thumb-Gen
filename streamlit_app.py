@@ -40,14 +40,14 @@ def base_of(title: str) -> str:
 
 
 def build_duplicate_map(api_key: str, allowed_states: list[str]) -> dict[str, list[str]]:
-    """Fetch open Game‑Launch tickets in *allowed* columns once, build {clean_base:[url…]}."""
+    """Fetch open Game‑Launch tickets in *allowed* columns once, build {clean_base:[url…]}"""
 
-    CLOSED_KEYWORDS = ["archive", "cancel", "complete"]  # we keep "done" allowed now
+    CLOSED_KEYWORDS = ["archive", "cancel", "complete"]
 
     query = """
 query ($after:String){
   issues(
-    filter:{ labels:{name:{eq:"Game Launch"}} },
+    filter:{ labels:{name:{eq:\"Game Launch\"}} },
     first:250,
     after:$after
   ){
@@ -79,9 +79,9 @@ query ($after:String){
         for n in data.get("nodes", []):
             state_name = n.get("state", {}).get("name", "").lower()
             if any(kw in state_name for kw in CLOSED_KEYWORDS):
-                continue  # skip archived/cancelled etc.
+                continue
             if state_name not in allow:
-                continue  # outside target columns
+                continue
             dup.setdefault(_clean(base_of(n["title"])), []).append(n["url"])
 
         pg = data.get("pageInfo", {})
@@ -91,6 +91,13 @@ query ($after:String){
     return dup
 
 # ───────────────────────────────
-#  (Provider, user‑key helpers unchanged below)
+#  PROVIDER & USER‑KEY HELPERS (unchanged)
 # ───────────────────────────────
-# [rest of code unchanged – Fetch Games will pass allowed_states]
+# [...]  (KEEP THE REST OF YOUR EXISTING CODE, BUT REPLACE THE LINE THAT CALLS
+# build_duplicate_map WITH THE ONE BELOW)
+
+# Inside your Fetch‑Games tab, replace the previous call with:
+# dup_map = build_duplicate_map(
+#     linear_key,
+#     [linear_state, "games", "games done"]  # columns treated as active
+# )
