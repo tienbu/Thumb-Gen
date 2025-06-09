@@ -7,7 +7,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
 # ───────────────────────────────
-# Secrets & page
+# Page & secrets
 # ───────────────────────────────
 st.set_page_config(page_title="Game Tools", page_icon="🎮", layout="wide")
 TINIFY_KEY  = st.secrets["TINIFY_API_KEY"]
@@ -15,83 +15,24 @@ SERVICE_B64 = st.secrets["GC_SERVICE_KEY_B64"]
 LINEAR_URL  = "https://api.linear.app/graphql"
 tinify.key  = TINIFY_KEY
 
-# ── localStorage helper (no infinite rerun) ─────────────────────
-import json, streamlit as st
-try:
-    from streamlit_js_eval import streamlit_js_eval
-except ModuleNotFoundError:
-    streamlit_js_eval = None
-
-
-def remember(field: str, label: str, *, pwd=False) -> str:
-    """
-    Persistent text_input saved in window.localStorage.
-    Works with streamlit-js-eval 0.1.4 without looping.
-    """
-    flag = f"_{field}_loaded"          # sentinel to avoid infinite rerun
-
-    # 1️⃣ one-time pull from localStorage
-    if streamlit_js_eval and not st.session_state.get(flag, False):
-        raw = streamlit_js_eval(
-            label=f"get_{field}",
-            code=f"localStorage.getItem('{field}')",
-            key=f"get_{field}",
-            default="",
-        )
-        if raw:
-            try:
-                st.session_state[field] = json.loads(raw)
-            except json.JSONDecodeError:
-                st.session_state[field] = raw
-        st.session_state[flag] = True   # mark done
-        st.experimental_rerun()
-
-    # 2️⃣ show input
-    value = st.text_input(
-        label,
-        value=st.session_state.get(field, ""),
-        type="password" if pwd else "default",
-    )
-
-    # 3️⃣ save if changed
-    if value and value != st.session_state.get(field, ""):
-        st.session_state[field] = value
-        if streamlit_js_eval:
-            js_val = json.dumps(value)
-            streamlit_js_eval(
-                label=f"set_{field}",
-                code=f"localStorage.setItem('{field}', {js_val})",
-                key=f"set_{field}",
-                default=None,
-            )
-
-    # 4️⃣ clear
-    if streamlit_js_eval and st.session_state.get(field):
-        if st.button("Clear saved key", key=f"clr_{field}"):
-            streamlit_js_eval(
-                label=f"rm_{field}",
-                code=f"localStorage.removeItem('{field}')",
-                key=f"rm_{field}",
-                default=None,
-            )
-            st.session_state.pop(field, None)
-            st.session_state.pop(flag, None)
-            st.experimental_rerun()
-
-    return value
-
 # ───────────────────────────────
-# Google Sheets helper
+# Google Sheets client
 # ───────────────────────────────
 SA_INFO = json.loads(base64.b64decode(SERVICE_B64))
 creds   = Credentials.from_service_account_info(SA_INFO)
 sheets  = build("sheets", "v4", credentials=creds)
-SHEET_ID = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
-RANGE    = "Sheet1!A:Z"
 
+SHEET_ID      = "1-kEERrIfKvRBUSyEg3ibJnmgZktASdd9vaQhpDPOGtA"
+PROV_RANGE    = "Sheet1!A:Z"
+USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
+
+# ───────────────────────────────
+# Provider-sheet helper
+# ───────────────────────────────
 def get_provider_credentials():
     rows = sheets.spreadsheets().values().get(
-        spreadsheetId=SHEET_ID, range=RANGE).execute().get("values", [])
+        spreadsheetId=SHEET_ID, range=PROV_RANGE
+    ).execute().get("values", [])
     if not rows:
         return {}
     hdr = [h.strip().lower() for h in rows[0]]
@@ -102,9 +43,9 @@ def get_provider_credentials():
     i_al   = hdr.index("aliases") if "aliases" in hdr else None
     out = {}
     for r in rows[1:]:
-        key = r[i_name].strip().lower() if len(r) > i_name else ""
-        if not key:
+        if len(r) <= i_name or not r[i_name]:
             continue
+        key = r[i_name].strip().lower()
         aliases = []
         if i_al is not None and len(r) > i_al and r[i_al].strip():
             aliases = [a.strip().lower() for a in r[i_al].split(",")]
@@ -117,38 +58,100 @@ def get_provider_credentials():
     return out
 
 # ───────────────────────────────
+# user_keys helpers
+# ───────────────────────────────
+def load_user_keys():
+    """Return dict {designer: {'key':…, 'col':…}} from user_keys tab."""
+    rows = sheets.spreadsheets().values().get(
+        spreadsheetId=SHEET_ID, range=USER_KEY_TAB
+    ).execute().get("values", [])
+    # rows[0] is header; skip it
+    return {
+        r[0].strip().lower(): {
+            "key": r[1].strip() if len(r) > 1 else "",
+            "col": r[2].strip() if len(r) > 2 else "",
+        }
+        for r in rows[1:]
+        if r and r[0].strip()
+    }
+
+def save_user_key(name: str, key: str, col: str):
+    """Insert or update a designer row in user_keys tab."""
+    rows = sheets.spreadsheets().values().get(
+        spreadsheetId=SHEET_ID, range=USER_KEY_TAB
+    ).execute().get("values", [])
+    header, data = rows[0], rows[1:]
+    # find row (if exists)
+    idx = next((i for i, r in enumerate(data) if r[0].lower() == name), None)
+    row_vals = [name, key, col]
+    body = {"values": [row_vals]}
+    if idx is None:
+        # append
+        sheets.spreadsheets().values().append(
+            spreadsheetId=SHEET_ID,
+            range=USER_KEY_TAB,
+            valueInputOption="RAW",
+            body=body,
+        ).execute()
+    else:
+        # update (offset by +2 for header + 1-index)
+        rng = f"user_keys!A{idx+2}:C{idx+2}"
+        sheets.spreadsheets().values().update(
+            spreadsheetId=SHEET_ID,
+            range=rng,
+            valueInputOption="RAW",
+            body=body,
+        ).execute()
+
+# ───────────────────────────────
 # Sidebar
 # ───────────────────────────────
 st.sidebar.title("Navigation")
 view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
 
 # ───────────────────────────────
-# Account tab
+# ACCOUNT TAB
 # ───────────────────────────────
 if view == "Account":
-    st.header("👋 Welcome to Game Tools")
-    with st.expander("How to get a Linear API key"):
-        st.markdown("""
-1. **Open Linear** → profile icon → **Settings**  
-2. **Security & Access** → **Personal API keys**  
-3. Create a key, copy it (shown only once)  
-4. Paste below.
-""")
-    key   = remember("linear_key",   "🔑 Linear API Key", pwd=True)
-    state = remember("linear_state", "🗂️ Column / State")
-    if key and state:
-        st.success("Credentials saved in your browser ✔")
+    st.header("Account / credentials")
+
+    users = load_user_keys()
+    existing_names = list(users.keys())
+    choice = st.selectbox("Designer", existing_names + ["<new designer>"])
+    if choice == "<new designer>":
+        designer = st.text_input("Enter your designer handle (lowercase)")
+    else:
+        designer = choice
+
+    prev_key = users.get(designer, {}).get("key", "")
+    prev_col = users.get(designer, {}).get("col", "")
+
+    key   = st.text_input("🔑 Linear API Key", type="password", value=prev_key)
+    col   = st.text_input("🗂️ Linear Column / State", value=prev_col)
+
+    if st.button("Save / Update"):
+        if not designer:
+            st.error("Designer name is required.")
+        elif not key or not col:
+            st.error("Both key and column are required.")
+        else:
+            save_user_key(designer.lower(), key.strip(), col.strip())
+            st.session_state["linear_key"]   = key.strip()
+            st.session_state["linear_state"] = col.strip()
+            st.session_state["designer"]     = designer.lower()
+            st.success("Saved!  You may now use the other tabs.")
     st.stop()
 
-# guard
+# Guard credentials
 if "linear_key" not in st.session_state or "linear_state" not in st.session_state:
-    st.error("Set credentials in Account tab first.")
+    st.error("Go to **Account** tab first and save your credentials.")
     st.stop()
+
 linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
 # ───────────────────────────────
-# Fetch Games tab
+# FETCH GAMES TAB
 # ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
@@ -157,15 +160,17 @@ if view == "Fetch Games":
 
     if st.button("Fetch"):
         q = {"query": f"""query {{
-  issues(filter: {{
-    dueDate: {{eq:"{date_str}"}},
-    labels: {{name: {{eq:"Game Launch"}}}},
-    state:  {{name: {{eq:"{linear_state}"}}}}
-  }}) {{ nodes {{ id title }} }}
-}}"""}
-        r = requests.post(LINEAR_URL, headers={"Authorization": linear_key,
-                                               "Content-Type": "application/json"},
-                          json=q)
+  issues(filter:{{
+    dueDate:{{eq:"{date_str}"}},
+    labels:{{name:{{eq:"Game Launch"}}}},
+    state:{{name:{{eq:"{linear_state}"}}}}
+  }}){{nodes{{id title}}}}
+}}"""}  # noqa
+        r = requests.post(
+            LINEAR_URL,
+            headers={"Authorization": linear_key, "Content-Type": "application/json"},
+            json=q,
+        )
         r.raise_for_status()
         nodes = r.json()["data"]["issues"]["nodes"]
         st.session_state["issue_map"] = {n["title"]: n["id"] for n in nodes}
@@ -176,27 +181,29 @@ if view == "Fetch Games":
 
         for n in nodes:
             issue_url = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
-            st.subheader(n["title"]); st.markdown(f"[🔗 Open in Linear]({issue_url})")
+            st.subheader(n["title"])
+            st.markdown(f"[🔗 Open in Linear]({issue_url})")
 
             prov_parts = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
-            for key in prov_parts[::-1]:            # most-specific first
+            for key in prov_parts[::-1]:  # most-specific first
                 for main, info in provs.items():
                     if key == main or key in info["aliases"]:
-                        if main in shown:   # skip duplicates
+                        if main in shown:
                             continue
                         if info["url"]:
                             st.markdown(f"[Provider link]({info['url']})")
                         if info["username"] or info["password"]:
                             st.code(f"User: {info['username']}\nPass: {info['password']}")
-                        shown.add(main); break
+                        shown.add(main)
+                        break
             if not shown:
-                st.warning("No provider info for: " + ", ".join(prov_parts))
+                st.warning("No provider info: " + ", ".join(prov_parts))
             st.divider()
     st.stop()
 
 # ───────────────────────────────
-# Thumbnails tab (portrait-only)
+# THUMBNAILS TAB (portrait-only)
 # ───────────────────────────────
 if view == "Thumbnails":
     st.header("🖼️ Create & download bundle")
@@ -232,7 +239,8 @@ if view == "Thumbnails":
 
         p_zip = io.BytesIO()
         with zipfile.ZipFile(p_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for f, b in folders["Portrait"].items(): zf.writestr(f, b)
+            for f, b in folders["Portrait"].items():
+                zf.writestr(f, b)
         p_zip.seek(0)
 
         bundle = io.BytesIO()
@@ -243,7 +251,10 @@ if view == "Thumbnails":
             zf.writestr("portrait.zip", p_zip.read())
         bundle.seek(0)
 
-        st.download_button("⬇️ Download bundle", bundle,
-                           file_name=f"{game_name or 'game'}_bundle.zip",
-                           mime="application/zip")
+        st.download_button(
+            "⬇️ Download bundle",
+            bundle,
+            file_name=f"{game_name or 'game'}_bundle.zip",
+            mime="application/zip",
+        )
         st.success("✅ Bundle ready!")
