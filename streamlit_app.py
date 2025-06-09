@@ -15,8 +15,8 @@ SERVICE_B64 = st.secrets["GC_SERVICE_KEY_B64"]
 LINEAR_URL  = "https://api.linear.app/graphql"
 tinify.key  = TINIFY_KEY
 
-# ── localStorage helper (final, JSON-safe) ──────────────────────
-import json
+# ── localStorage helper (Streamlit Cloud tested, js-eval 0.1.4) ──
+import json, streamlit as st
 try:
     from streamlit_js_eval import streamlit_js_eval
 except ModuleNotFoundError:
@@ -24,41 +24,43 @@ except ModuleNotFoundError:
 
 
 def remember(field: str, label: str, *, pwd=False) -> str:
-    """
-    Persistent text_input using window.localStorage.
-    Works with streamlit-js-eval 0.1.4 (label+code+key+default).
-    """
-    # 1️⃣ read -> session_state (component returns "" on first run, real value on 2nd)
+    """Text-input that persists to window.localStorage (per-browser)."""
+    # 1️⃣ Pull once from localStorage → session_state
     if streamlit_js_eval and field not in st.session_state:
-        stored = streamlit_js_eval(
+        raw = streamlit_js_eval(
             label=f"get_{field}",
             code=f"localStorage.getItem('{field}')",
             key=f"get_{field}",
             default="",
         )
-        if stored:                           # only store non-empty
-            st.session_state[field] = stored
+        if raw:
+            try:
+                st.session_state[field] = json.loads(raw)  # remove quotes
+            except json.JSONDecodeError:
+                st.session_state[field] = raw
+        # Trigger one rerun so the input shows the value immediately
+        st.experimental_rerun()
 
-    # 2️⃣ show input
+    # 2️⃣ Show the input
     value = st.text_input(
         label,
         value=st.session_state.get(field, ""),
         type="password" if pwd else "default",
     )
 
-    # 3️⃣ save if changed
+    # 3️⃣ Save back if changed
     if value and value != st.session_state.get(field, ""):
         st.session_state[field] = value
         if streamlit_js_eval:
-            js_value = json.dumps(value)     # safe quoting
+            js_val = json.dumps(value)  # safe for JS
             streamlit_js_eval(
                 label=f"set_{field}",
-                code=f"localStorage.setItem('{field}', {js_value})",
+                code=f"localStorage.setItem('{field}', {js_val})",
                 key=f"set_{field}",
                 default=None,
             )
 
-    # 4️⃣ clear button
+    # 4️⃣ Clear button
     if streamlit_js_eval and st.session_state.get(field):
         if st.button("Clear saved key", key=f"clr_{field}"):
             streamlit_js_eval(
