@@ -16,7 +16,7 @@ LINEAR_URL  = "https://api.linear.app/graphql"
 tinify.key  = TINIFY_KEY
 
 # ───────────────────────────────
-#  GOOGLE-SHEETS CLIENT
+#  GOOGLE SHEETS CLIENT
 # ───────────────────────────────
 SA_INFO = json.loads(base64.b64decode(SERVICE_B64))
 creds   = Credentials.from_service_account_info(SA_INFO)
@@ -30,22 +30,14 @@ USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
 #  DUPLICATE UTILITIES
 # ───────────────────────────────
 def _clean(txt: str) -> str:
-    """lower-case, ASCII dash, remove non-alphanum"""
     txt = txt.replace("–", "-").replace("—", "-")
     return re.sub(r"[^a-z0-9]", "", txt.lower())
 
 def base_of(title: str) -> str:
-    """part before first ' - ' trimmed"""
     return title.split(" - ")[0].strip()
 
-# ───────────────────────────────
-#  Duplicate-map  (safe, one request per page)
-# ───────────────────────────────
 def build_duplicate_map(api_key: str) -> dict[str, list[str]]:
-    """
-    { clean_base_title : [issue_url, …] } for every OPEN Game-Launch ticket.
-    Never raises – returns {} if Linear responds with an error.
-    """
+    """Fetch **all** open Game-Launch tickets once, build {clean_base: [url…]}."""
     query = """
 query ($after:String){
   issues(
@@ -60,37 +52,31 @@ query ($after:String){
     pageInfo{ hasNextPage endCursor }
   }
 }"""
-    hdr  = {"Authorization": api_key, "Content-Type": "application/json"}
-    dup  : dict[str, list[str]] = {}
-    after = None
-
+    hdr = {"Authorization": api_key, "Content-Type": "application/json"}
+    after = None; dup: dict[str, list[str]] = {}
     while True:
         try:
             resp = requests.post(
                 LINEAR_URL,
                 json={"query": query, "variables": {"after": after}},
-                headers=hdr,
-                timeout=30,
-            ).json()
+                headers=hdr, timeout=30
+            )
+            if resp is None:   # shouldn’t happen, but guard anyway
+                break
+            resp = resp.json()
         except requests.exceptions.RequestException as e:
             st.warning(f"Linear request failed: {e}")
             return dup
-
         if resp.get("errors"):
             st.warning("Linear error while building duplicate map:\n"
                        + json.dumps(resp["errors"], indent=2))
             return dup
-
         data = resp.get("data", {}).get("issues", {})
         for n in data.get("nodes", []):
-            key = _clean(base_of(n["title"]))
-            dup.setdefault(key, []).append(n["url"])
-
-        page = data.get("pageInfo", {})
-        if not page.get("hasNextPage"):
-            break
-        after = page.get("endCursor")
-
+            dup.setdefault(_clean(base_of(n["title"])), []).append(n["url"])
+        pg = data.get("pageInfo", {})
+        if not pg.get("hasNextPage"): break
+        after = pg.get("endCursor")
     return dup
 
 # ───────────────────────────────
@@ -106,19 +92,16 @@ def load_user_keys():
     rows = sheets.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=USER_KEY_TAB).execute().get("values", [])
     return {
-        r[0].strip().lower(): {
-            "key": r[1].strip() if len(r) > 1 else "",
-            "col": r[2].strip() if len(r) > 2 else "",
-        }
-        for r in rows[1:] if r and r[0].strip()
+        r[0].strip().lower(): {"key": r[1].strip(), "col": r[2].strip()}
+        for r in rows[1:] if len(r) >= 3 and r[0].strip()
     }
 
-def save_user_key(name: str, key: str, col: str):
+def save_user_key(name: str, api_key: str, col: str):
     rows = sheets.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=USER_KEY_TAB).execute().get("values", [])
     header, data = rows[0], rows[1:]
     idx = next((i for i, r in enumerate(data) if r[0].lower() == name), None)
-    body = {"values": [[name, key, col]]}
+    body = {"values": [[name, api_key, col]]}
     if idx is None:
         sheets.spreadsheets().values().append(
             spreadsheetId=SHEET_ID, range=USER_KEY_TAB,
@@ -132,12 +115,11 @@ def save_user_key(name: str, key: str, col: str):
 def get_provider_credentials():
     rows = sheets.spreadsheets().values().get(
         spreadsheetId=SHEET_ID, range=PROV_RANGE).execute().get("values", [])
-    if not rows:
-        return {}
+    if not rows: return {}
     hdr = [h.strip().lower() for h in rows[0]]
-    i_name = hdr.index("provider name"); i_url = hdr.index("url")
-    i_user = hdr.index("username");     i_pass = hdr.index("password")
-    i_al   = hdr.index("aliases") if "aliases" in hdr else None
+    i_name, i_url  = hdr.index("provider name"), hdr.index("url")
+    i_user, i_pass = hdr.index("username"), hdr.index("password")
+    i_al = hdr.index("aliases") if "aliases" in hdr else None
     out = {}
     for r in rows[1:]:
         if len(r) <= i_name or not r[i_name].strip(): continue
@@ -165,97 +147,87 @@ view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
 if view == "Account":
     st.header("Account / credentials")
     users = load_user_keys()
-    existing = list(users.keys())
-    choice = st.selectbox("Designer", existing + ["<new designer>"])
-    designer = st.text_input("Designer handle (lowercase)",
-                             value="" if choice == "<new designer>" else choice)
+    opt   = list(users.keys()) + ["<new designer>"]
+    sel   = st.selectbox("Designer", opt)
+    designer = st.text_input("Designer handle", value="" if sel == "<new designer>" else sel)
 
     prev = users.get(designer.lower(), {})
-    key  = st.text_input("🔑 Linear API Key", type="password", value=prev.get("key", ""))
-    col  = st.text_input("🗂️ Column / State", value=prev.get("col", ""))
+    api_key_in = st.text_input("Linear API key", type="password", value=prev.get("key", ""))
+    col_in     = st.text_input("Column / State", value=prev.get("col", ""))
 
     if st.button("Save / Update"):
-        if not designer or not key or not col:
-            st.error("Designer, key and column are required.")
+        if not designer or not api_key_in or not col_in:
+            st.error("All fields required.")
         else:
-            save_user_key(designer.lower(), key.strip(), col.strip())
-            st.session_state["linear_key"]   = key.strip()
-            st.session_state["linear_state"] = col.strip()
-            st.success("Saved!  You may now use the other tabs.")
+            save_user_key(designer.lower(), api_key_in.strip(), col_in.strip())
+            st.session_state["linear_key"]   = api_key_in.strip()
+            st.session_state["linear_state"] = col_in.strip()
+            st.success("Saved ✔ – reloads with your creds")
+            st.experimental_rerun()
     st.stop()
 
 # guard creds
 if "linear_key" not in st.session_state or "linear_state" not in st.session_state:
-    st.error("Go to **Account** and save credentials first.")
+    st.error("Go to **Account** first.")
     st.stop()
 
 linear_key   = st.session_state["linear_key"]
 linear_state = st.session_state["linear_state"]
 
 # ───────────────────────────────
-#  FETCH GAMES – one-fetch duplicate flag
+#  FETCH GAMES
 # ───────────────────────────────
 if view == "Fetch Games":
     st.header("📋 Fetch game launches")
-    date_val = st.date_input("Pick a date", datetime.today())
-    date_str = date_val.strftime("%Y-%m-%d")
-
+    dt = st.date_input("Date", datetime.today())
     if st.button("Fetch"):
-        with st.spinner("Downloading open Game-Launch list …"):
+        with st.spinner("Building duplicate map…"):
             dup_map = build_duplicate_map(linear_key)
 
-            day_q = {"query": f"""query {{
+        with st.spinner("Fetching selected date…"):
+            q = {"query": f"""query {{
   issues(filter:{{
-    dueDate:{{eq:"{date_str}"}},
+    dueDate:{{eq:"{dt:%Y-%m-%d}"}},
     labels:{{name:{{eq:"Game Launch"}}}},
     state:{{name:{{eq:"{linear_state}"}}}}
   }}, first:250){{nodes{{id title}}}}
 }}"""}  # noqa
             day_nodes = safe_nodes(
-                requests.post(
-                    LINEAR_URL,
-                    json=day_q,
-                    headers={"Authorization": linear_key,
-                             "Content-Type": "application/json"},
-                    timeout=30,
-                ).json()
+                requests.post(LINEAR_URL, json=q,
+                              headers={"Authorization": linear_key,
+                                       "Content-Type": "application/json"},
+                              timeout=30).json()
             )
-            st.session_state["issue_map"] = {n["title"]: n["id"] for n in day_nodes}
 
         provs = get_provider_credentials()
         if not day_nodes:
-            st.info("No launches for that date.")
+            st.info("None found for that date.")
 
         for n in day_nodes:
             key      = _clean(base_of(n["title"]))
             dup_urls = [u for u in dup_map.get(key, []) if not u.endswith(n["id"])]
             badge    = f" **🚩 duplicate** ([existing]({dup_urls[0]}))" if dup_urls else ""
-            my_url   = f"https://linear.app/issue/{n['id']}"
-
             st.subheader(n["title"] + badge)
-            st.markdown(f"[🔗 Open in Linear]({my_url})")
+            st.markdown(f"[Open in Linear](https://linear.app/issue/{n['id']})")
 
-            # ---------- provider info ----------
-            prov_parts = [p.strip().lower()
-                          for p in n["title"].split(" - ")[-1].split("/")]
+            # provider info
+            prov_tags = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
             shown = set()
-            for k in prov_parts[::-1]:
+            for tag in prov_tags[::-1]:
                 for main, info in provs.items():
-                    if k == main or k in info["aliases"]:
-                        if main in shown:
-                            continue
-                        if info["url"]:
-                            st.markdown(f"[Provider link]({info['url']})")
+                    if tag == main or tag in info["aliases"]:
+                        if main in shown: continue
+                        if info["url"]: st.markdown(f"[Provider link]({info['url']})")
                         if info["username"] or info["password"]:
                             st.code(f"User: {info['username']}\nPass: {info['password']}")
                         shown.add(main); break
             if not shown:
-                st.warning("No provider info: " + ", ".join(prov_parts))
+                st.warning("No provider info: " + ", ".join(prov_tags))
             st.divider()
     st.stop()
 
 # ───────────────────────────────
-#  THUMBNAILS TAB (portrait-only)
+#  THUMBNAILS TAB  (portrait-only)
 # ───────────────────────────────
 if view == "Thumbnails":
     st.header("🖼️ Create & download bundle")
@@ -263,48 +235,44 @@ if view == "Thumbnails":
         st.error("Fetch games first.")
         st.stop()
 
-    issue_title = st.selectbox("Issue", list(st.session_state["issue_map"].keys()))
-    issue_id    = st.session_state["issue_map"][issue_title]
-    st.markdown(f"[🔗 Open in Linear](https://linear.app/issue/{issue_id})")
+    title = st.selectbox("Issue", list(st.session_state["issue_map"].keys()))
+    issue_id = st.session_state["issue_map"][title]
+    st.markdown(f"[Open in Linear](https://linear.app/issue/{issue_id})")
 
-    game_name = st.text_input("Game name", placeholder=issue_title)
-    uploads   = st.file_uploader("Upload **portrait.jpg** & **box.jpg**",
-                                 type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+    game_name = st.text_input("Game name", placeholder=title)
+    uploads   = st.file_uploader("portrait.jpg & box.jpg",
+                                 type=["jpg","jpeg","png"], accept_multiple_files=True)
 
     if st.button("Process"):
-        spec = {"box": (".jpg", False), "portrait": (".jpg", True)}
-        bucket = {k: f for f in uploads or [] for k in spec if k in f.name.lower()}
-        if len(bucket) != 2:
-            st.error("Please upload BOTH portrait.jpg and box.jpg")
-            st.stop()
+        spec = {"box":(".jpg",False), "portrait":(".jpg",True)}
+        bucket = {k:f for f in uploads or [] for k in spec if k in f.name.lower()}
+        if len(bucket)!=2:
+            st.error("Both files required."); st.stop()
 
-        folders = {"Box": {}, "Portrait": {}}
-        for role, upl in bucket.items():
-            ext, comp = spec[role]; data = upl.read()
-            if comp:
-                data = tinify.from_buffer(data).to_buffer()
-            folders[role.capitalize()][f"{game_name}{ext}"] = data
-            if role == "portrait":
-                buf = io.BytesIO()
+        folders = {"Box":{}, "Portrait":{}}
+        for role,upl in bucket.items():
+            ext,compress = spec[role]; data=upl.read()
+            if compress: data = tinify.from_buffer(data).to_buffer()
+            folders[role.capitalize()][f"{game_name}{ext}"]=data
+            if role=="portrait":
+                buf=io.BytesIO()
                 Image.open(io.BytesIO(data)).save(buf, format="WEBP")
-                folders["Portrait"][f"{game_name}.webp"] = buf.getvalue()
+                folders["Portrait"][f"{game_name}.webp"]=buf.getvalue()
 
-        p_zip = io.BytesIO()
-        with zipfile.ZipFile(p_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for fname, blob in folders["Portrait"].items():
-                zf.writestr(fname, blob)
-        p_zip.seek(0)
+        pzip = io.BytesIO()
+        with zipfile.ZipFile(pzip,"w",zipfile.ZIP_DEFLATED) as z:
+            for fn,bl in folders["Portrait"].items(): z.writestr(fn,bl)
+        pzip.seek(0)
 
-        bundle = io.BytesIO()
-        with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as zf:
-            for fold, files in folders.items():
-                for fname, blob in files.items():
-                    zf.writestr(f"{fold}/{fname}", blob)
-            zf.writestr("portrait.zip", p_zip.read())
+        bundle=io.BytesIO()
+        with zipfile.ZipFile(bundle,"w",zipfile.ZIP_DEFLATED) as z:
+            for fold,files in folders.items():
+                for fn,bl in files.items():
+                    z.writestr(f"{fold}/{fn}",bl)
+            z.writestr("portrait.zip", pzip.read())
         bundle.seek(0)
 
         st.download_button("⬇️ Download bundle",
-                           bundle,
-                           file_name=f"{game_name or 'game'}_bundle.zip",
+                           bundle, file_name=f"{game_name or 'game'}_bundle.zip",
                            mime="application/zip")
         st.success("✅ Bundle ready!")
