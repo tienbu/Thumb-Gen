@@ -27,6 +27,11 @@ PROV_RANGE    = "Sheet1!A:Z"
 USER_KEY_TAB  = "user_keys!A:C"        # designer | linear_key | column
 
 # ───────────────────────────────
+# Duplicate-detection settings
+# ───────────────────────────────
+DUP_COLUMNS = ["Games", "Games Done"]  # Linear board columns to treat as potential duplicates
+
+# ───────────────────────────────
 # Provider-sheet helper
 # ───────────────────────────────
 def get_provider_credentials():
@@ -60,6 +65,7 @@ def get_provider_credentials():
 # ───────────────────────────────
 # user_keys helpers
 # ───────────────────────────────
+
 def load_user_keys():
     """Return dict {designer: {'key':…, 'col':…}} from user_keys tab."""
     rows = sheets.spreadsheets().values().get(
@@ -74,6 +80,7 @@ def load_user_keys():
         for r in rows[1:]
         if r and r[0].strip()
     }
+
 
 def save_user_key(name: str, key: str, col: str):
     """Insert or update a designer row in user_keys tab."""
@@ -104,8 +111,43 @@ def save_user_key(name: str, key: str, col: str):
         ).execute()
 
 # ───────────────────────────────
+# Linear duplicate helper
+# ───────────────────────────────
+
+def find_linear_duplicate(issue_id: str, game_title: str, designer_name: str, linear_key: str):
+    """Return (dup_id, dup_identifier) if a potential duplicate exists, else None."""
+    # Strip provider suffix so "Game – PS5/Mollie" becomes "Game"
+    base_title = game_title.split(" - ")[0].strip()
+
+    query = {
+        "query": f"""
+        query FindDup {{
+          issues(filter: {{
+            id: {{ neq: \"{issue_id}\" }}
+            state: {{ name: {{ in: {json.dumps(DUP_COLUMNS)} }} }}
+            assignee: {{ name: {{ eq: \"{designer_name}\" }} }}
+            title: {{ contains: \"{base_title}\" }}
+          }}) {{
+            nodes {{ id identifier }}
+          }}
+        }}"""
+    }
+
+    resp = requests.post(
+        LINEAR_URL,
+        headers={"Authorization": linear_key, "Content-Type": "application/json"},
+        json=query,
+    )
+    resp.raise_for_status()
+    nodes = resp.json()["data"]["issues"]["nodes"]
+    if nodes:
+        return nodes[0]["id"], nodes[0]["identifier"]
+    return None
+
+# ───────────────────────────────
 # Sidebar
 # ───────────────────────────────
+
 st.sidebar.title("Navigation")
 view = st.sidebar.radio("Go to", ["Account", "Fetch Games", "Thumbnails"])
 
@@ -161,9 +203,9 @@ if view == "Fetch Games":
     if st.button("Fetch"):
         q = {"query": f"""query {{
   issues(filter:{{
-    dueDate:{{eq:"{date_str}"}},
-    labels:{{name:{{eq:"Game Launch"}}}},
-    state:{{name:{{eq:"{linear_state}"}}}}
+    dueDate:{{eq:\"{date_str}\"}},
+    labels:{{name:{{eq:\"Game Launch\"}}}},
+    state:{{name:{{eq:\"{linear_state}\"}}}}
   }}){{nodes{{id title}}}}
 }}"""}  # noqa
         r = requests.post(
@@ -182,6 +224,20 @@ if view == "Fetch Games":
         for n in nodes:
             issue_url = f"https://linear.app/issue/{st.session_state['issue_map'][n['title']]}"
             st.subheader(n["title"])
+
+            # ───── Duplicate check ─────
+            dup = find_linear_duplicate(
+                issue_id=n["id"],
+                game_title=n["title"],
+                designer_name=st.session_state["designer"],
+                linear_key=linear_key,
+            )
+            if dup:
+                dup_id, dup_key = dup
+                st.warning(
+                    f"⚠️ Similar task already exists: [{dup_key}](https://linear.app/issue/{dup_id})"
+                )
+
             st.markdown(f"[🔗 Open in Linear]({issue_url})")
 
             prov_parts = [p.strip().lower() for p in n["title"].split(" - ")[-1].split("/")]
